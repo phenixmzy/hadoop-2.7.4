@@ -31,6 +31,9 @@ import org.apache.hadoop.conf.Configuration;
 /**
  * Abstracts queue operations for different blocking queues.
  */
+/**
+ * 有别于不同的阻塞队列的队列操作.其主要通过原子引用(AtomicReference)对队列实现原子操作.
+ */
 public class CallQueueManager<E> {
   public static final Log LOG = LogFactory.getLog(CallQueueManager.class);
 
