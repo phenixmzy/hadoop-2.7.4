@@ -103,6 +103,7 @@ import com.google.protobuf.CodedOutputStream;
  * @see Server
  */
 /**
+ *一个IPC服务的客户端.IPC的call方法获得单个Writable类型的参数,处理后返回一个Writable类型的值.服务是运行在一个端口上并以参数类和值类定义.
  *
  *Client主要的内部类
  * 1. Call，表示一次rpc的调用请求
@@ -113,7 +114,7 @@ import com.google.protobuf.CodedOutputStream;
  *
  * Client的调用过程
  * 1
- * 2  谁调用它？
+ * 2 谁调用它？RPC.Class?
  * 3 调用client对象的call方法，向服务器发送请求（参数、方法）call() -> connection.sendRpcRequest(call);
  * 4 获得连接对象,通过connection发送Call对象 getConnection
  * 5 connection的线程等待接受结果.run() -> receiveRpcResponse()
@@ -172,6 +173,9 @@ public class Client {
   private final static ClientExecutorServiceFactory clientExcecutorFactory =
       new ClientExecutorServiceFactory();
 
+  /**
+   * 一个单例,获取和释放ExecutorService 线程池的方法都是粗粒度锁,并通过计数器executorRefCount   是否创建一个线程池或真正关闭线程池.如果获取和释放的计数不同步，会引起内存泄漏.同时通过计数器可以知道线程池是否有执行关闭操作.
+   * */
   private static class ClientExecutorServiceFactory {
     private int executorRefCount = 0;
     private ExecutorService clientExecutor = null;
@@ -331,6 +335,15 @@ public class Client {
 
   /** 
    * Class that represents an RPC call
+   * 属性:
+   * final int id; call id
+   * final int retry; call重试次数　
+   * final Writable rpcRequest;
+   * Writable rpcResponse; 序列化的返回响应，如果有错误则是null，即Nullwritable
+   * IOException error; 处理中的异常
+   * final RPC.RpcKind rpcKind; rpc引擎采用的种类，主要有writable引擎方式，和protocolbuffer引擎方式，两种的序列化和rpc消息处理各不相同，writable是Hadoop创建之初自带的一种处理方式，protocolbuffer是google公司所采用的一种方式，目前Hadoop默认的采用方式是protocolbuffer方式，主要是平台化和速度上都要胜于writalble。
+   * boolean done; true表示call已完成，判断call完成与否的依据
+
    */
   static class Call {
     final int id;               // call id
@@ -363,6 +376,9 @@ public class Client {
 
     /** Indicate when the call is complete and the
      * value or error are available.  Notifies by default.  */
+    /**
+     * 当返回结果,通知client线程
+     * */
     protected synchronized void callComplete() {
       this.done = true;
       notify();                                 // notify caller
@@ -383,6 +399,9 @@ public class Client {
      * 
      * @param rpcResponse return value of the rpc call.
      */
+    /**
+     * 返回结果,通知client线程
+     * */
     public synchronized void setRpcResponse(Writable rpcResponse) {
       this.rpcResponse = rpcResponse;
       callComplete();
@@ -396,6 +415,11 @@ public class Client {
   /** Thread that reads responses and notifies callers.  Each connection owns a
    * socket connected to a remote address.  Calls are multiplexed through this
    * socket: responses may be delivered out of order. */
+  /**
+   * Connection是一个线程类,用于读取response和通知call.
+   * 每一个Connection都有其所属的连接到远端地址的socket.Call通过这个socket可以多路复用,但response可能不会按顺序返回.
+   * 同一个Connection会被多个Call公用,其以Hashtable<Integer, Call>中为key为Call.id进行区别.
+   * */
   private class Connection extends Thread {
     private InetSocketAddress server;             // server ip:port
     private final ConnectionId remoteId;                // connection id
@@ -604,7 +628,10 @@ public class Client {
       }
       return false;
     }
-    
+
+    /**
+     * 创建socket连接,绑定地址,以及相应的Kerberos安全认证
+     * */
     private synchronized void setupConnection() throws IOException {
       short ioFailures = 0;
       short timeoutFailures = 0;
@@ -667,6 +694,11 @@ public class Client {
      * the connection again. The other problem is to do with ticket expiry. To
      * handle that, a relogin is attempted.
      */
+    /**
+     * 如果多个client用相同的票据在同一时间尝试连接同一个server,那么server会认定为重复攻击.
+     * 为了解决这个问题,client随机回退,重新初始化连接.其他问题是票据过期,以尝试重新登陆为处理.
+     * 其会断开socket连接，重新登陆Kerberos安全认证
+     * */
     private synchronized void handleSaslConnectionFailure(
         final int currRetries, final int maxRetries, final Exception ex,
         final Random rand, final UserGroupInformation ugi) throws IOException,
@@ -718,6 +750,12 @@ public class Client {
      * a header to the server and starts
      * the connection thread that waits for responses.
      */
+    /**
+     * getConnection方法只是初始化了connection对象，并将要发送的请求call对象放入连接connection中，其实还并没有与客户端进行通信。
+     * 开始通信的方法是setupIOstreams方法，此方法不仅建立与服务端通信的输入输出对象，还进行消息头的发送，判断能否与服务端进行连接，由于Hadoop有很多个版本，而且并不是每个版本之间都能进行完美通信的。
+     * 所以不同版本是不能通信的，消息头就是负责这个任务的，消息头中也附带了通信的协议，
+     * 说明到底是谁和谁之间通信（是client和namenode还是datanode和namenode，还是yarn中的resourceManage 和nodemanage等等)
+     * */
     private synchronized void setupIOstreams(
         AtomicBoolean fallbackToSimpleAuth) {
       if (socket != null || shouldCloseConnection.get()) {
@@ -849,6 +887,9 @@ public class Client {
      * @param ioe failure reason
      * @throws IOException if max number of retries is reached
      */
+    /**
+     * 处理连接超时.当连接次数大于等于最大次数,停止re-connect并抛出异常.它会被setupIOstreams 方法调用.
+     * */
     private void handleConnectionTimeout(
         int curRetries, int maxRetries, IOException ioe) throws IOException {
 
@@ -922,6 +963,9 @@ public class Client {
     /* Write the connection context header for each connection
      * Out is not synchronized because only the first thread does this.
      */
+    /**
+     * 向服务端写连接上下文.传完头信息就要继续传连接上下文，上下文信息主要是确定当前连接来自于那个客户端，正在处理的是当前客户端的那个call调用，等等信息以确保服务端能够准确的将应答消息发送给正确的客户端
+     * */
     private void writeConnectionContext(ConnectionId remoteId,
                                         AuthMethod authMethod)
                                             throws IOException {
@@ -1098,6 +1142,9 @@ public class Client {
     /* Receive a response.
      * Because only one receiver, so no synchronization on in.
      */
+    /**
+     * 接收服务端返回的信息
+     * */
     private void receiveRpcResponse() {
       if (shouldCloseConnection.get()) {
         return;
