@@ -124,7 +124,7 @@ import com.google.protobuf.CodedOutputStream;
  * 异步/同步模型
  * Hadoop的RPC对外的接口其实是同步的，但是，RPC的内部实现其实是异步消息机制。hadoop用线程wait/notify机制实现异步转同步，发送请求（call）之后wait请求处理完毕，接收完响应（connection.receiveResponse()）之后notify，notify()方法在setRpcResponse中。
  * 但现在有一个问题，一个connection有多个call。可能同时有多个call在等待接收消息，那么是当client接收到response后，怎样确认它到底是之前哪个request的response呢？这个就是依靠的connection中的一个HashTable<Integer, Call> calls了，其中的Integer是用来标识Call，是一个call.id，这样就可以将request和response对应上了。
- *
+ * 123
  * */
 public class Client {
   
