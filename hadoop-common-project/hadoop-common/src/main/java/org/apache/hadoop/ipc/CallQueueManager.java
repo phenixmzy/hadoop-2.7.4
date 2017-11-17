@@ -150,6 +150,9 @@ public class CallQueueManager<E> {
    * Replaces active queue with the newly requested one and transfers
    * all calls to the newQ before returning.
    */
+  /**
+   * 替换队列是先转换队列原子引用，好让入队的元素先进入新队列;其后的where循环中不断清倒旧队列元素.清理后,提取队列的原子引用也指向新的队列
+   * */
   public synchronized void swapQueue(
       Class<? extends BlockingQueue<E>> queueClassToUse, int maxSize,
       String ns, Configuration conf) {
