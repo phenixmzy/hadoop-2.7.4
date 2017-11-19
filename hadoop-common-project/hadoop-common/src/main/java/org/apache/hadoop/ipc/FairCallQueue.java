@@ -42,6 +42,11 @@ import org.apache.hadoop.metrics2.util.MBeans;
 /**
  * A queue with multiple levels for each priority.
  */
+/**
+ *每个优先级具有多个级别的队列.
+ * 这是较新版本的Hadoop的新特性，RPC FairCallQueue替换了之前的单一的RPC queue的模式，RPC Server会维护并按照请求的用户进行分组，Handler会按照队列的优先级去消费queue里面的RPC Call.
+ * 这个功能它可以防止因为某个用户的cleint的大量请求导致NN无法响应，整个集群瘫痪的状态，开启了之后，请求多的用户请求会被降级，这样不会造成多租户下，影响他用户的访问.
+ * */
 public class FairCallQueue<E extends Schedulable> extends AbstractQueue<E>
   implements BlockingQueue<E> {
   // Configuration Keys
