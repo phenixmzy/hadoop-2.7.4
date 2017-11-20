@@ -45,24 +45,31 @@ import com.google.common.annotations.VisibleForTesting;
  * for large periods (on the order of seconds), as it offloads work to the
  * decay sweep.
  */
+/**
+ * RPC的一个调度器.
+ * 衰减RPC调度计数在map进来的请求,然后在固定周期内衰减计数(像GMP那样).调度程序在大周期（按秒顺序）进行了优化.
+ *
+ * */
 public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean {
   /**
    * Period controls how many milliseconds between each decay sweep.
    */
+  /** 控制衰减周期 */
   public static final String IPC_CALLQUEUE_DECAYSCHEDULER_PERIOD_KEY =
-    "faircallqueue.decay-scheduler.period-ms";
+          "faircallqueue.decay-scheduler.period-ms";
   public static final long   IPC_CALLQUEUE_DECAYSCHEDULER_PERIOD_DEFAULT =
-    5000L;
+          5000L;
 
   /**
    * Decay factor controls how much each count is suppressed by on each sweep.
    * Valid numbers are > 0 and < 1. Decay factor works in tandem with period
    * to control how long the scheduler remembers an identity.
    */
+  /** 控制衰减因子*/
   public static final String IPC_CALLQUEUE_DECAYSCHEDULER_FACTOR_KEY =
-    "faircallqueue.decay-scheduler.decay-factor";
+          "faircallqueue.decay-scheduler.decay-factor";
   public static final double IPC_CALLQUEUE_DECAYSCHEDULER_FACTOR_DEFAULT =
-    0.5;
+          0.5;
 
   /**
    * Thresholds are specified as integer percentages, and specify which usage
@@ -74,19 +81,23 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
    * - q1 from 10 up to 40
    * - q0 otherwise.
    */
+  /** 阀值是的INT类型表示一个百分比,其指定了每个queue被分配的范围. */
+
+  /** 控制衰减阈值*/
   public static final String IPC_CALLQUEUE_DECAYSCHEDULER_THRESHOLDS_KEY =
-    "faircallqueue.decay-scheduler.thresholds";
+          "faircallqueue.decay-scheduler.thresholds";
 
   // Specifies the identity to use when the IdentityProvider cannot handle
   // a schedulable.
   public static final String DECAYSCHEDULER_UNKNOWN_IDENTITY =
-    "IdentityProvider.Unknown";
+          "IdentityProvider.Unknown";
 
   public static final Log LOG = LogFactory.getLog(DecayRpcScheduler.class);
 
   // Track the number of calls for each schedulable identity
+  //跟踪每一个调度call的数量
   private final ConcurrentHashMap<Object, AtomicLong> callCounts =
-    new ConcurrentHashMap<Object, AtomicLong>();
+          new ConcurrentHashMap<Object, AtomicLong>();
 
   // Should be the sum of all AtomicLongs in callCounts
   private final AtomicLong totalCalls = new AtomicLong();
@@ -94,7 +105,7 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
   // Pre-computed scheduling decisions during the decay sweep are
   // atomically swapped in as a read-only map
   private final AtomicReference<Map<Object, Integer>> scheduleCacheRef =
-    new AtomicReference<Map<Object, Integer>>();
+          new AtomicReference<Map<Object, Integer>>();
 
   // Tune the behavior of the scheduler
   private final long decayPeriodMillis; // How long between each tick
@@ -107,6 +118,7 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
    * This TimerTask will call decayCurrentCounts until
    * the scheduler has been garbage collected.
    */
+  /** TimeTask会调用decayCurrentCounts,直到调度器被回收,scheduler通过WeakReference弱引用来指定,当不再需要是可以实现自动回收 */
   public static class DecayTask extends TimerTask {
     private WeakReference<DecayRpcScheduler> schedulerRef;
     private Timer timer;
@@ -141,7 +153,7 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
     if (numQueues < 1) {
       throw new IllegalArgumentException("number of queues must be > 0");
     }
-
+    /** 获得队列所需的衰减参数,身份以及队列阀值 */
     this.numQueues = numQueues;
     this.decayFactor = parseDecayFactor(ns, conf);
     this.decayPeriodMillis = parseDecayPeriodMillis(ns, conf);
@@ -160,12 +172,12 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
   // Load configs
   private IdentityProvider parseIdentityProvider(String ns, Configuration conf) {
     List<IdentityProvider> providers = conf.getInstances(
-      ns + "." + CommonConfigurationKeys.IPC_CALLQUEUE_IDENTITY_PROVIDER_KEY,
-      IdentityProvider.class);
+            ns + "." + CommonConfigurationKeys.IPC_CALLQUEUE_IDENTITY_PROVIDER_KEY,
+            IdentityProvider.class);
 
     if (providers.size() < 1) {
       LOG.info("IdentityProvider not specified, " +
-        "defaulting to UserIdentityProvider");
+              "defaulting to UserIdentityProvider");
       return new UserIdentityProvider();
     }
 
@@ -174,13 +186,13 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
 
   private static double parseDecayFactor(String ns, Configuration conf) {
     double factor = conf.getDouble(ns + "." +
-        IPC_CALLQUEUE_DECAYSCHEDULER_FACTOR_KEY,
-      IPC_CALLQUEUE_DECAYSCHEDULER_FACTOR_DEFAULT
+                    IPC_CALLQUEUE_DECAYSCHEDULER_FACTOR_KEY,
+            IPC_CALLQUEUE_DECAYSCHEDULER_FACTOR_DEFAULT
     );
 
     if (factor <= 0 || factor >= 1) {
       throw new IllegalArgumentException("Decay Factor " +
-        "must be between 0 and 1");
+              "must be between 0 and 1");
     }
 
     return factor;
@@ -188,8 +200,8 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
 
   private static long parseDecayPeriodMillis(String ns, Configuration conf) {
     long period = conf.getLong(ns + "." +
-        IPC_CALLQUEUE_DECAYSCHEDULER_PERIOD_KEY,
-      IPC_CALLQUEUE_DECAYSCHEDULER_PERIOD_DEFAULT
+                    IPC_CALLQUEUE_DECAYSCHEDULER_PERIOD_KEY,
+            IPC_CALLQUEUE_DECAYSCHEDULER_PERIOD_DEFAULT
     );
 
     if (period <= 0) {
@@ -200,15 +212,15 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
   }
 
   private static double[] parseThresholds(String ns, Configuration conf,
-      int numQueues) {
+                                          int numQueues) {
     int[] percentages = conf.getInts(ns + "." +
-      IPC_CALLQUEUE_DECAYSCHEDULER_THRESHOLDS_KEY);
+            IPC_CALLQUEUE_DECAYSCHEDULER_THRESHOLDS_KEY);
 
     if (percentages.length == 0) {
       return getDefaultThresholds(numQueues);
     } else if (percentages.length != numQueues-1) {
       throw new IllegalArgumentException("Number of thresholds should be " +
-        (numQueues-1) + ". Was: " + percentages.length);
+              (numQueues-1) + ". Was: " + percentages.length);
     }
 
     // Convert integer percentages to decimals
@@ -243,10 +255,13 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
    * This method should be called periodically in order to keep
    * counts current.
    */
+  /**
+   * 衰减每个用户的存储计数并按需要进行清理.此方法会定期执行以保持当前计数.与gmp计数原理一样,但当用户的计数衰减为0时便会清理改用户.
+   * */
   private void decayCurrentCounts() {
     long total = 0;
     Iterator<Map.Entry<Object, AtomicLong>> it =
-      callCounts.entrySet().iterator();
+            callCounts.entrySet().iterator();
 
     while (it.hasNext()) {
       Map.Entry<Object, AtomicLong> entry = it.next();
@@ -298,6 +313,7 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
    * @param identity the identity of the user to increment
    * @return the value before incrementation
    */
+  /** 根据用户身份进行RPC-Call数量自增,RPC-CALL自增包含其总数以及对应用户身份对应的CALL数 */
   private long getAndIncrement(Object identity) throws InterruptedException {
     // We will increment the count, or create it if no such count exists
     AtomicLong count = this.callCounts.get(identity);
@@ -326,6 +342,7 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
    * @param occurrences how many occurrences
    * @return scheduling decision from 0 to numQueues - 1
    */
+  /** 通过用户身份的RPC-CALL数,为调度计算做决策.这里会通过RPC-CALL数寻对应总-CALL的百分,返回映射对应的优先级 */
   private int computePriorityLevel(long occurrences) {
     long totalCallSnapshot = totalCalls.get();
 
@@ -422,10 +439,13 @@ public class DecayRpcScheduler implements RpcScheduler, DecayRpcSchedulerMXBean 
    * MetricsProxy is a singleton because we may init multiple schedulers and we
    * want to clean up resources when a new scheduler replaces the old one.
    */
+  /**
+   * MetricsProxy是一个单例,因为我们可能会初始化多个调度器并且当一个旧的调度器被新的替换时,会对资源进行清理.
+   * */
   private static final class MetricsProxy implements DecayRpcSchedulerMXBean {
     // One singleton per namespace
     private static final HashMap<String, MetricsProxy> INSTANCES =
-      new HashMap<String, MetricsProxy>();
+            new HashMap<String, MetricsProxy>();
 
     // Weakref for delegate, so we don't retain it forever if it can be GC'd
     private WeakReference<DecayRpcScheduler> delegate;
