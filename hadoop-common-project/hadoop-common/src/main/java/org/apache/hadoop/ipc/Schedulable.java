@@ -28,6 +28,7 @@ import org.apache.hadoop.io.Writable;
  * Interface which allows extracting information necessary to
  * create schedulable identity strings.
  */
+/** 一个接口.允许提取必要的信息创建可调度的身份 */
 @InterfaceAudience.Private
 public interface Schedulable {
   public UserGroupInformation getUserGroupInformation();

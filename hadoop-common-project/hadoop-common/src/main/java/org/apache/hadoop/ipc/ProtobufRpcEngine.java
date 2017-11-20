@@ -64,6 +64,9 @@ import com.google.protobuf.TextFormat;
 /**
  * RPC Engine for for protobuf based RPCs.
  */
+/**
+ * 基于protobuf的RPC引擎.
+ * */
 @InterfaceStability.Evolving
 public class ProtobufRpcEngine implements RpcEngine {
   public static final Log LOG = LogFactory.getLog(ProtobufRpcEngine.class);

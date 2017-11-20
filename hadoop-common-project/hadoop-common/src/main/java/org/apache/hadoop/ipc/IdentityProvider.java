@@ -27,6 +27,9 @@ import org.apache.hadoop.classification.InterfaceAudience;
  * Implementers will be able to change how schedulers treat
  * Schedulables.
  */
+/**
+ * 为每个调度创建一个身份.会通过提取字段和返回身份的string
+ * */
 @InterfaceAudience.Private
 public interface IdentityProvider {
   /**

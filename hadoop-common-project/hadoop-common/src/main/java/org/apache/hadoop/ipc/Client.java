@@ -113,8 +113,10 @@ import com.google.protobuf.CodedOutputStream;
  *
  *
  * Client的调用过程
- * 1
- * 2 谁调用它？RPC.Class?
+ * 1 一个实际的调用.org.apache.hadoop.ipc.ProtobufRpcEngine#getProxy 方法生成一个代理,其中Invoker是一个实现了InvocationHandler 接口的类
+ * 2 代理对象调用相应方法（invoke()）org.apache.hadoop.ipc.ProtobufRpcEngine.Invoker
+ * Invocation 用于封装方法名和参数，作为数据传输层。远程调用的主要关键就是Invocation实现了Writable接口,Invocation在write(DataOutput out)函数中将调用的methodName写入到out，将调用方法的参数个数写入out ，同时逐个将参数的className写入out,最后将所有参数逐个写入out,这也就决定了通过RPC实现调用的方法中的参数要么是简单类型，要么是String,要么是实现了Writable接口的类（参数自己知道如何序列化到stream），要么是数组（数组的元素也必须为简单类型,String,实现了Writable接口的类）。
+ * Invocation序列化参数的实现是通过如下函数实现的:org.apache.hadoop.io.ObjectWritable.writeObject
  * 3 调用client对象的call方法，向服务器发送请求（参数、方法）call() -> connection.sendRpcRequest(call);
  * 4 获得连接对象,通过connection发送Call对象 getConnection
  * 5 connection的线程等待接受结果.run() -> receiveRpcResponse()
