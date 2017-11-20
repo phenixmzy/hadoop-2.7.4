@@ -508,6 +508,7 @@ public class Client {
      * @return true if the call was added.
      */
     private synchronized boolean addCall(Call call) {
+      //shouldCloseConnection也是connection类的属性，当连接异常，或者客户端要断开连接是，它返回false，说明这个连接正在回收中，不能继续使用
       if (shouldCloseConnection.get())
         return false;
       calls.put(call.id, call);
@@ -758,6 +759,7 @@ public class Client {
      * */
     private synchronized void setupIOstreams(
         AtomicBoolean fallbackToSimpleAuth) {
+      //在socket不为空的情况下就不用再初始化下面的内容了，这说明了，目前正在重用已有的connection，而shouldCloseConnection为true则表示当前的连接正要关闭状态，不可用因此下面的初始化也没有意义，要获取一个新的连接才可以
       if (socket != null || shouldCloseConnection.get()) {
         return;
       } 
@@ -771,10 +773,10 @@ public class Client {
         short numRetries = 0;
         Random rand = null;
         while (true) {
-          setupConnection();
+          setupConnection();//connection一些初始化信息，建立socket，初始socket等等操作
           InputStream inStream = NetUtils.getInputStream(socket);
           OutputStream outStream = NetUtils.getOutputStream(socket);
-          writeConnectionHeader(outStream);
+          writeConnectionHeader(outStream);//向服务端写消息头信息
           if (authProtocol == AuthProtocol.SASL) {
             final InputStream in2 = inStream;
             final OutputStream out2 = outStream;
@@ -837,7 +839,7 @@ public class Client {
           writeConnectionContext(remoteId, authMethod);
 
           // update last activity time
-          touch();
+          touch();//connection连接有一定的超时限制，touch方法进行时间更新将连接最新时间更新到现在。
 
           if (Trace.isTracing()) {
             Trace.addTimelineAnnotation("IPC client connected to " + server);
@@ -854,7 +856,7 @@ public class Client {
         } else {
           markClosed(new IOException("Couldn't set up IO streams", t));
         }
-        close();
+        close(); //如果出现错误就关闭连接，
       }
     }
     
@@ -970,10 +972,19 @@ public class Client {
                                         AuthMethod authMethod)
                                             throws IOException {
       // Write out the ConnectionHeader
+      // 建立上下文，依据协议名称，connectionId所属用户组
       IpcConnectionContextProto message = ProtoUtil.makeIpcConnectionContext(
           RPC.getProtocolName(remoteId.getProtocol()),
           remoteId.getTicket(),
           authMethod);
+      /**
+       * 建立上下文头信息，包括
+       * RpcKind.RPC_PROTOCOL_BUFFER说明消息采用的序列化方式，
+       * CONNECTION_CONTEXT_CALL_ID应用的那个call，这里采用一个特殊的callId，
+       * CONNECTION_CONTEXT_CALL_ID=-3，表示是一个上下文信息，没有请求需要处理，
+       * RpcConstants.INVALID_RETRY_COUNT表示call的重试次数，远程调用肯定会出现调用失败，而失败可能是网络等问题，所以重试几次以确保最终能够获得返回结果，这里的RpcConstants.INVALID_RETRY_COUNT=-1，并不需要重试，因为没有请求需要处理，
+       * clientId当前发出请求的客户端
+       * */
       RpcRequestHeaderProto connectionContextHeader = ProtoUtil
           .makeRpcRequestHeader(RpcKind.RPC_PROTOCOL_BUFFER,
               OperationProto.RPC_FINAL_PACKET, CONNECTION_CONTEXT_CALL_ID,
@@ -982,6 +993,7 @@ public class Client {
           new RpcRequestMessageWrapper(connectionContextHeader, message);
       
       // Write out the packet length
+      /**写出消息到服务端，先写消息长度，然后是内容，这是固定的方式*/
       out.writeInt(request.getLength());
       request.write(out);
     }
@@ -1573,7 +1585,7 @@ public class Client {
   private Connection getConnection(ConnectionId remoteId,
       Call call, int serviceClass, AtomicBoolean fallbackToSimpleAuth)
       throws IOException {
-    if (!running.get()) {
+    if (!running.get()) {//running是client的一个属性，表示客户端现在是否向服务端进行请求，如果没有running（running是一个AtomicBollean原子布尔类的对象）就是返回false
       // the client is stopped
       throw new IOException("The client is stopped");
     }
@@ -1584,19 +1596,20 @@ public class Client {
      */
     do {
       synchronized (connections) {
+        //判断是否存在对应的连接,没有则新建
         connection = connections.get(remoteId);
         if (connection == null) {
           connection = new Connection(remoteId, serviceClass);
           connections.put(remoteId, connection);
         }
       }
-    } while (!connection.addCall(call));
+    } while (!connection.addCall(call));//进行输入输出对象初始化
     
     //we don't invoke the method below inside "synchronized (connections)"
     //block above. The reason for that is if the server happens to be slow,
     //it will take longer to establish a connection and that will slow the
     //entire system down.
-    connection.setupIOstreams(fallbackToSimpleAuth);
+    connection.setupIOstreams(fallbackToSimpleAuth);//进行输入输出对象初始化
     return connection;
   }
   
@@ -1746,13 +1759,14 @@ public class Client {
       }
       if (obj instanceof ConnectionId) {
         ConnectionId that = (ConnectionId) obj;
-        return isEqual(this.address, that.address)
+
+        return isEqual(this.address, that.address)//同一个远端服务地址，即要连接同一个服务端
             && this.doPing == that.doPing
             && this.maxIdleTime == that.maxIdleTime
             && isEqual(this.connectionRetryPolicy, that.connectionRetryPolicy)
             && this.pingInterval == that.pingInterval
-            && isEqual(this.protocol, that.protocol)
-            && this.rpcTimeout == that.rpcTimeout
+            && isEqual(this.protocol, that.protocol)//同一个远程协议，像datanode与namenode，client与 namenode等之间通信的时候都各自有自己的协议，如果不是同一个协议则使用不同的连接
+                && this.rpcTimeout == that.rpcTimeout
             && this.tcpNoDelay == that.tcpNoDelay
             && isEqual(this.ticket, that.ticket);
       }
