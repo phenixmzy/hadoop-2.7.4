@@ -223,7 +223,9 @@ public abstract class Server {
    *  the rpc request.
    *  @param rpcInvoker - use to process the calls on SS.
    */
-  
+  /**
+   * 注册某类RPC
+   * */
   public static void registerProtocolEngine(RPC.RpcKind rpcKind, 
           Class<? extends Writable> rpcRequestWrapperClass,
           RpcInvoker rpcInvoker) {

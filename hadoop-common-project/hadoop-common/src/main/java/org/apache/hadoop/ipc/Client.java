@@ -111,6 +111,11 @@ import com.google.protobuf.CodedOutputStream;
  * 3. ConnectionId：连接的标记（包括server地址，协议，其他一些连接的配置项信息）
  * 4. ClientExecutorServiceFactory：ExecutorService实现的线程池
  *
+ * Client，ConnectionId，Connection，Call的关系差不多如下：
+ * 1. 一个Client里面维护着一个connections的hashtable，其中ConnectionId由用户组，服务器地址，协议来确定唯一性。
+ * private Hashtable<ConnectionId, Connection> connections = new Hashtable<ConnectionId, Connection>();
+ * 2. 一个Connection里可能有很多Call
+ * private Hashtable<Integer, Call> calls = new Hashtable<Integer, Call>();
  *
  * Client的调用过程
  * 1 一个实际的调用.org.apache.hadoop.ipc.ProtobufRpcEngine#getProxy 方法生成一个代理,其中Invoker是一个实现了InvocationHandler 接口的类
@@ -147,7 +152,7 @@ public class Client {
     callId.set(cid);
     retryCount.set(rc);
   }
-
+  //一个Client里面维护着一个connections的Hashtable，其中ConnectionId由用户组，服务器地址，协议来确定唯一性。
   private Hashtable<ConnectionId, Connection> connections =
     new Hashtable<ConnectionId, Connection>();
 
@@ -445,6 +450,7 @@ public class Client {
     private ByteArrayOutputStream pingRequest; // ping message
     
     // currently active calls
+    //一个Connection里可能有很多Call
     private Hashtable<Integer, Call> calls = new Hashtable<Integer, Call>();
     private AtomicLong lastActivity = new AtomicLong();// last I/O activity time
     private AtomicBoolean shouldCloseConnection = new AtomicBoolean();  // indicate if the connection is closed
@@ -1584,6 +1590,9 @@ public class Client {
   
   /** Get a connection from the pool, or create a new one and add it to the
    * pool.  Connections to a given ConnectionId are reused. */
+  /**
+   * getConnection方法用来跟服务器建立Connection连接，第一次远程方法调用时建立，然后保存在缓存里重复使用
+   * */
   private Connection getConnection(ConnectionId remoteId,
       Call call, int serviceClass, AtomicBoolean fallbackToSimpleAuth)
       throws IOException {
