@@ -101,6 +101,7 @@ public class RPC {
      * @return the call's return
      * @throws IOException
      **/
+    /** 服务端处理Client请求的Call*/
     public Writable call(Server server, String protocol,
         Writable rpcRequest, long receiveTime) throws Exception ;
   }
@@ -460,6 +461,7 @@ public class RPC {
   /** Construct a client-side proxy object that implements the named protocol,
    * talking to a server at the named address. 
    * @param <T>*/
+  /** 构造一个客户端代理对象,它实现了命名的协议并与指定的server进行通讯会话 */
   public static <T> T getProxy(Class<T> protocol,
                                 long clientVersion,
                                 InetSocketAddress addr,
@@ -534,6 +536,7 @@ public class RPC {
    * @return the proxy
    * @throws IOException if any error occurs
    */
+  /** 获取一个代理协议,它包含了一个与远端服务的连接和一系列服务端支持的methods.它会被同类的getProxy 方法调用,返回一个Client端的代理对象 */
    public static <T> ProtocolProxy<T> getProtocolProxy(Class<T> protocol,
                                 long clientVersion,
                                 InetSocketAddress addr,
@@ -592,6 +595,7 @@ public class RPC {
     * @return a proxy instance
     * @throws IOException
     */
+   /** 构建一个默认带有SocketFactory的客户端代理对象 */
    public static <T> T getProxy(Class<T> protocol,
                                  long clientVersion,
                                  InetSocketAddress addr, Configuration conf)
@@ -603,6 +607,7 @@ public class RPC {
   /**
    * Returns the server address for a given proxy.
    */
+  /** 返回指定代理对象的服务端地址 */
   public static InetSocketAddress getServerAddress(Object proxy) {
     return getConnectionIdForProxy(proxy).getAddress();
   }
@@ -699,6 +704,11 @@ public class RPC {
   /**
    * Class to construct instances of RPC server with specific options.
    */
+  /**
+   * NameNode Server，DataNode Server，HMaster Server，HRegionServer，ResourceManager Server等等，都是一个服务（一个进程），运行在某一个端口上，
+   * 在我们启动NameNode，HBase或者Yarn时，都会启动这些服务，那么这些服务是如何启动的呢，其实他们都有一致的启动代码，这就是RPC.Builder类.
+   * RPC.Builder用到了设计模式中典型的Builder模式，在Builder中调用RpcEngine的getServer方法建立一个Server实例，然后调用实例的start方法开始运行服务器。
+   * */
   public static class Builder {
     private Class<?> protocol = null;
     private Object instance = null;
