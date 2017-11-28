@@ -190,6 +190,9 @@ import com.google.protobuf.BlockingService;
  * This class is responsible for handling all of the RPC calls to the NameNode.
  * It is created, started, and stopped by {@link NameNode}.
  */
+/**
+ * NameNodeRpcServer是负责处理所有NameNode的RPC-CALL.该类对象的创建，启动，停止都由NameNode负责执行.
+ * */
 class NameNodeRpcServer implements NamenodeProtocols {
   
   private static final Logger LOG = NameNode.LOG;
@@ -207,10 +210,12 @@ class NameNodeRpcServer implements NamenodeProtocols {
   private final boolean serviceAuthEnabled;
 
   /** The RPC server that listens to requests from DataNodes */
+  /** RPC SERVER监听来自DataNodes的请求 */
   private final RPC.Server serviceRpcServer;
   private final InetSocketAddress serviceRPCAddress;
   
   /** The RPC server that listens to requests from clients */
+    /** RPC SERVER监听来自Clients的请求 */
   protected final RPC.Server clientRpcServer;
   protected final InetSocketAddress clientRpcAddress;
   
@@ -222,8 +227,11 @@ class NameNodeRpcServer implements NamenodeProtocols {
     this.namesystem = nn.getNamesystem();
     this.retryCache = namesystem.getRetryCache();
     this.metrics = NameNode.getNameNodeMetrics();
-    
-    int handlerCount = 
+    /**
+     * handler的并行处理数，用于处理call-queue的并行数,该配置如果dfs.namenode.service.handler.count没有配置,
+     * 则client的rpc请求与datanode的请求合用,如果在高并发的情况,需要把其分开,避免资源竞争.
+     * */
+    int handlerCount =
       conf.getInt(DFS_NAMENODE_HANDLER_COUNT_KEY, 
                   DFS_NAMENODE_HANDLER_COUNT_DEFAULT);
 
@@ -291,7 +299,7 @@ class NameNodeRpcServer implements NamenodeProtocols {
       }
       LOG.info("Service RPC server is binding to " + bindHost + ":" +
           serviceRpcAddr.getPort());
-
+      /** dfs.namenode.service.handler.count用于出来来自datanode的rpc请求 */
       int serviceHandlerCount =
         conf.getInt(DFS_NAMENODE_SERVICE_HANDLER_COUNT_KEY,
                     DFS_NAMENODE_SERVICE_HANDLER_COUNT_DEFAULT);
