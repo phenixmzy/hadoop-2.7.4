@@ -101,7 +101,10 @@ public class ProtobufRpcEngine implements RpcEngine {
       InetSocketAddress addr, UserGroupInformation ticket, Configuration conf,
       SocketFactory factory, int rpcTimeout, RetryPolicy connectionRetryPolicy,
       AtomicBoolean fallbackToSimpleAuth) throws IOException {
-
+    /**
+     * java.lang.reflect.Proxy代理对象会把所有方法调用都转换到InvocationHandler方法中的invoke方法中去.
+     * Hadoop的IPC也是一样，通过这个InvocationHandler#invoke方法调用服务器端方法
+     * */
     final Invoker invoker = new Invoker(protocol, addr, ticket, conf, factory,
         rpcTimeout, connectionRetryPolicy, fallbackToSimpleAuth);
     return new ProtocolProxy<T>(protocol, (T) Proxy.newProxyInstance(
