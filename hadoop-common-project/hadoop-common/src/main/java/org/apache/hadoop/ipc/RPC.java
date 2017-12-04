@@ -566,6 +566,7 @@ public class RPC {
    * @return the proxy
    * @throws IOException if any error occurs
    */
+  /** 获得协议代理,它包含了一个连接到远端服务的代理以及一系列能被server所支持的method */
    public static <T> ProtocolProxy<T> getProtocolProxy(Class<T> protocol,
                                 long clientVersion,
                                 InetSocketAddress addr,
