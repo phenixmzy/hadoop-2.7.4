@@ -147,6 +147,18 @@ public class ProtobufRpcEngine implements RpcEngine {
      */
     private Invoker(Class<?> protocol, Client.ConnectionId connId,
         Configuration conf, SocketFactory factory) {
+      /**
+       * remoteId是一个ConnectionId,会在构造函数中生成一个(函数Client.ConnectionId.getConnectionId).这个Id用来唯一标识一个Connection,ConnectionId由用户组+连接地址+协议名称等组成.
+       * 这些信息都相等时,表示同一个用户,连接到同一个服务器上的同一个服务上,我们可以共用已经建立好的连接.
+       * 同时,维护这一个Client,表示客户端.
+       * Client，ConnectionId，Connection，Call的关系差不多如下:
+       *
+       * 一个Client里面维护着一个connections的hashtable，其中ConnectionId由用户组，服务器地址，协议来确定唯一性。
+       * private Hashtable<ConnectionId, Connection> connections = new Hashtable<ConnectionId, Connection>();
+       *
+       * 一个Connection里可能有很多Call
+       * private Hashtable<Integer, Call> calls = new Hashtable<Integer, Call>();
+       * */
       this.remoteId = connId;
       this.client = CLIENTS.getClient(conf, factory, RpcResponseWrapper.class);
       this.protocolName = RPC.getProtocolName(protocol);
