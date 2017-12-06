@@ -596,7 +596,11 @@ public class RPC {
     * @return a proxy instance
     * @throws IOException
     */
-   /** 构建一个默认带有SocketFactory的客户端代理对象 */
+   /** 构建一个默认带有SocketFactory的客户端代理对象
+    * 客户端从务器RPC得到一个服务端的代理对象,这个方法最后调用ProtobufRpcEngine中的getProxy返回一个java.lang.reflect.Proxy对象.
+    * java.lang.reflect.Proxy代理对象会把所有方法调用都转换到InvocationHandler方法中的invoke方法中去，
+    * Hadoop的IPC也是一样，通过这个invoke方法调用服务器端方法
+    * */
    public static <T> T getProxy(Class<T> protocol,
                                  long clientVersion,
                                  InetSocketAddress addr, Configuration conf)
