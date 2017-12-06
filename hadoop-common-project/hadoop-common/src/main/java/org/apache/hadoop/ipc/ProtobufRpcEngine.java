@@ -166,6 +166,9 @@ public class ProtobufRpcEngine implements RpcEngine {
           .getProtocolVersion(protocol);
     }
 
+    /**
+     *  RPC信息分两部分:RpcRequest头 和 RpcRequest信息体本身.
+     * */
     private RequestHeaderProto constructRpcRequestHeader(Method method) {
       RequestHeaderProto.Builder builder = RequestHeaderProto
           .newBuilder();
