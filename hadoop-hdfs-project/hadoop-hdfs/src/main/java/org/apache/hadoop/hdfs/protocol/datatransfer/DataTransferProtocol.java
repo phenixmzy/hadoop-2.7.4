@@ -34,6 +34,7 @@ import org.apache.hadoop.util.DataChecksum;
 
 /**
  * Transfer data to/from datanode using a streaming protocol.
+ * 一个流式接口,用于对datanode进行读写操作以及大量的数据块传输.
  */
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
@@ -95,6 +96,9 @@ public interface DataTransferProtocol {
    * @param pinning whether to pin the block, so Balancer won't move it.
    * @param targetPinnings whether to pin the block on target datanode
    */
+  /**
+   * 把数据块写入到数据流管道中.
+   * */
   public void writeBlock(final ExtendedBlock blk,
       final StorageType storageType, 
       final Token<BlockTokenIdentifier> blockToken,

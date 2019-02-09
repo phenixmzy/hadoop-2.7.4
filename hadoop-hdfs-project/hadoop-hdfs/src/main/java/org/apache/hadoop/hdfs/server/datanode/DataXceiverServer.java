@@ -39,6 +39,12 @@ import com.google.common.annotations.VisibleForTesting;
  * other DataNodes.  This small server does not use the 
  * Hadoop IPC mechanism.
  */
+/**
+ * Datanode的流式接口参考了Socket的实现,设计了DataXceiverServer以及DataXceiver两个对象.
+ * DataXerviceServer用于在Datanode上监听流式接口的请求,
+ * 每当有Client通过Sender类发起流式请求时,DataXerviceServer就会监听并接收这个请求;
+ * 然后创建一个DataXceiver对象用于响应这个请求并执行对应的操作.
+ * */
 class DataXceiverServer implements Runnable {
   public static final Log LOG = DataNode.LOG;
   

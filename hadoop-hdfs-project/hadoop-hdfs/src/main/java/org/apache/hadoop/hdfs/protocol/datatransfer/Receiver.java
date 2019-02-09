@@ -43,6 +43,9 @@ import org.apache.hadoop.hdfs.shortcircuit.ShortCircuitShm.SlotId;
 import org.apache.htrace.TraceScope;
 
 /** Receiver */
+/**
+ * 一个抽象类,封装了DataTransferProtocol的执行操作,用于执行远程节点发起的流式接口请求.
+ * */
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public abstract class Receiver implements DataTransferProtocol {

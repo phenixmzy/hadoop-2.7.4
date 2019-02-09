@@ -54,6 +54,12 @@ import org.apache.htrace.Span;
 import com.google.protobuf.Message;
 
 /** Sender */
+/**
+ * 用于向远端Datanode发起DataTransferProtocol的请求.
+ * 所有接口方法操作大致以下流程:
+ * 1 使用Protocol对方法参数进行序列化;
+ * 2 通过send()发送 DataTransferProtocol的版本号,Op码,Protocol序列化后的方法参数
+ * */
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
 public class Sender implements DataTransferProtocol {
@@ -65,6 +71,9 @@ public class Sender implements DataTransferProtocol {
   }
 
   /** Initialize a operation. */
+  /**
+   *  向输入流写入版本号,和Op操作码
+   * */
   private static void op(final DataOutput out, final Op op
       ) throws IOException {
     out.writeShort(DataTransferProtocol.DATA_TRANSFER_VERSION);
@@ -93,6 +102,10 @@ public class Sender implements DataTransferProtocol {
     return builder.build();
   }
 
+  /**
+   * 调用端: DFSClient
+   * 从Datanode上读取指定的Block.
+   * */
   @Override
   public void readBlock(final ExtendedBlock blk,
       final Token<BlockTokenIdentifier> blockToken,
@@ -101,7 +114,7 @@ public class Sender implements DataTransferProtocol {
       final long length,
       final boolean sendChecksum,
       final CachingStrategy cachingStrategy) throws IOException {
-
+    //把该方法的所有参数用Protocol进行序列化
     OpReadBlockProto proto = OpReadBlockProto.newBuilder()
       .setHeader(DataTransferProtoUtil.buildClientHeader(blk, clientName, blockToken))
       .setOffset(blockOffset)
@@ -109,11 +122,15 @@ public class Sender implements DataTransferProtocol {
       .setSendChecksums(sendChecksum)
       .setCachingStrategy(getCachingStrategy(cachingStrategy))
       .build();
-
+    // 1.把Op操作发送远端,描述当前操作为READ_BLOCK
+    // 2.同时发送序列化后的proto
     send(out, Op.READ_BLOCK, proto);
   }
   
-
+  /**
+   * 调用端: DFSClient
+   * 把Block写入到数据流管道中.
+   * */
   @Override
   public void writeBlock(final ExtendedBlock blk,
       final StorageType storageType, 
@@ -161,6 +178,15 @@ public class Sender implements DataTransferProtocol {
     send(out, Op.WRITE_BLOCK, proto.build());
   }
 
+  /**
+   * 调用端: DFSClient
+   *
+   * 把Block复制到另一个Datanode上.
+   *
+   * 使用场景:
+   * 数据块复制操作是因为在数据流管道中有数据节点出现故障,需要用新的数据节点替换异常的数据节点.
+   * DFSClient会调用这个方法将数据流管道中正常的数据节点上已经写的数据块复制到新添加的数据节点上.
+   * */
   @Override
   public void transferBlock(final ExtendedBlock blk,
       final Token<BlockTokenIdentifier> blockToken,
@@ -194,7 +220,11 @@ public class Sender implements DataTransferProtocol {
     OpRequestShortCircuitAccessProto proto = builder.build();
     send(out, Op.REQUEST_SHORT_CIRCUIT_FDS, proto);
   }
-  
+  /**
+   * 调用端:
+   *
+   * 释放一个短路读取数据块的文件描述符.
+   * */
   @Override
   public void releaseShortCircuitFds(SlotId slotId) throws IOException {
     ReleaseShortCircuitAccessRequestProto.Builder builder =
@@ -209,6 +239,11 @@ public class Sender implements DataTransferProtocol {
     send(out, Op.RELEASE_SHORT_CIRCUIT_FDS, proto);
   }
 
+  /**
+   * 调用端:
+   *
+   * 获取一个短路读取数据块的文件描述符.
+   * */
   @Override
   public void requestShortCircuitShm(String clientName) throws IOException {
     ShortCircuitShmRequestProto.Builder builder =
@@ -222,7 +257,16 @@ public class Sender implements DataTransferProtocol {
     ShortCircuitShmRequestProto proto = builder.build();
     send(out, Op.REQUEST_SHORT_CIRCUIT_SHM, proto);
   }
-  
+
+  /**
+   * 调用端: 本地Datanode
+   *
+   * 从源Datanode复制来的数据块写入本地的Datanode上.写入成功后通过Namenode,并且删除源Datanode上的数据块.
+   *
+   * 使用场景:
+   * 在数据均衡操作的场景下.
+   *
+   * */
   @Override
   public void replaceBlock(final ExtendedBlock blk,
       final StorageType storageType, 
@@ -239,6 +283,15 @@ public class Sender implements DataTransferProtocol {
     send(out, Op.REPLACE_BLOCK, proto);
   }
 
+  /**
+   * 调用端: 本地Datanode
+   *
+   * 复制当前Datanode上的数据块.
+   *
+   * 使用场景:
+   * 在数据均衡操作的场景下.
+   *
+   * */
   @Override
   public void copyBlock(final ExtendedBlock blk,
       final Token<BlockTokenIdentifier> blockToken) throws IOException {
