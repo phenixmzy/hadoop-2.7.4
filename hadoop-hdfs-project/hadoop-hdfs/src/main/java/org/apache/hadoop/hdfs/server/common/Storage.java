@@ -696,6 +696,14 @@ public abstract class Storage extends StorageInfo {
      * <code>null</code> if storage is already locked.
      * @throws IOException if locking fails.
      */
+    /**
+     * 该方法是尝试获取一个专用的lock.也是真正进行加锁操作的方法.
+     * 1 该方法首先创建一个锁文件;
+     * 2 调用file.getChannel().lock()方法尝试获取目录的独占锁;
+     * 如果已经有进程占用锁文件,那么getChannel().lock方法返回null,表明有另一个节点运行在当前存储目录上,tryLock方法抛出异常并退出执行.
+     * 如果加锁成功,tryLock方法会在加锁文件上写入虚拟机信息.
+     * 3 加锁成功后,tryLock方法会调用deleteOnExit方法,在Java虚拟机运行结束时删除in_use.lock文件.
+     * */
     @SuppressWarnings("resource")
     FileLock tryLock() throws IOException {
       boolean deletionHookAdded = false;
@@ -708,10 +716,13 @@ public abstract class Storage extends StorageInfo {
       String jvmName = ManagementFactory.getRuntimeMXBean().getName();
       FileLock res = null;
       try {
+        // 尝试加锁
         res = file.getChannel().tryLock();
+        // 已经有程序获得锁,则直接抛出异常
         if (null == res) {
           throw new OverlappingFileLockException();
         }
+        // 加锁成功,在锁文件中写入虚拟机信息
         file.write(jvmName.getBytes(Charsets.UTF_8));
         LOG.info("Lock on " + lockF + " acquired by nodename " + jvmName);
       } catch(OverlappingFileLockException oe) {
@@ -732,6 +743,7 @@ public abstract class Storage extends StorageInfo {
         // If the file existed prior to our startup, we didn't
         // call deleteOnExit above. But since we successfully locked
         // the dir, we can take care of cleaning it up.
+        // 加锁成功后,在虚拟机运行结束后,删除锁文件
         lockF.deleteOnExit();
       }
       return res;

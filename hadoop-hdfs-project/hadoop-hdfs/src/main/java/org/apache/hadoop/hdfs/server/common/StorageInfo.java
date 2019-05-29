@@ -39,7 +39,7 @@ import com.google.common.base.Joiner;
 
 /**
  * Common class for storage information.
- * 
+ * 该类是用于描述存储的基本信息
  * TODO namespaceID should be long and computed as hash(address + port)
  */
 @InterfaceAudience.Private
