@@ -65,6 +65,11 @@ import com.google.common.base.Preconditions;
  * The locks are released when the servers stop (normally or abnormally).
  * 
  */
+/**
+ * Storage是一个抽象类,为DataNode, NameNode提供抽象的存储服务.
+ * Storage类管理着当前节点上所有的存储目录,每个存储目录都由一个StorageDirectory对象管理,一个List<StorageDirectory>字段
+ * 管理所有的StorageDirectory,并通过DirIterator迭代器进行遍历.
+ * */
 @InterfaceAudience.Private
 public abstract class Storage extends StorageInfo {
   public static final Log LOG = LogFactory.getLog(Storage.class.getName());
@@ -583,7 +588,7 @@ public abstract class Storage extends StorageInfo {
       String rootPath = root.getCanonicalPath();
       switch(curState) {
       case COMPLETE_UPGRADE:  // mv previous.tmp -> previous
-        LOG.info("Completing previous upgrade for storage directory " 
+        LOG.info("Completing previus upgrade for storage directory "
                  + rootPath);
         rename(getPreviousTmp(), getPreviousDir());
         return;
@@ -700,15 +705,16 @@ public abstract class Storage extends StorageInfo {
      * 该方法是尝试获取一个专用的lock.也是真正进行加锁操作的方法.
      * 1 该方法首先创建一个锁文件;
      * 2 调用file.getChannel().lock()方法尝试获取目录的独占锁;
-     * 如果已经有进程占用锁文件,那么getChannel().lock方法返回null,表明有另一个节点运行在当前存储目录上,tryLock方法抛出异常并退出执行.
+     * 如果已经有进程占用锁文件,那么getChannel().lock方法返回null,表明有另一个节点运行在当前存储目录上,
+     * tryLock方法抛出异常并退出执行.
      * 如果加锁成功,tryLock方法会在加锁文件上写入虚拟机信息.
      * 3 加锁成功后,tryLock方法会调用deleteOnExit方法,在Java虚拟机运行结束时删除in_use.lock文件.
      * */
     @SuppressWarnings("resource")
     FileLock tryLock() throws IOException {
       boolean deletionHookAdded = false;
-      File lockF = new File(root, STORAGE_FILE_LOCK);
-      if (!lockF.exists()) {
+      File lockF = new File(root, STORAGE_FILE_LOCK); //构造STORAGE_FILE_LOCK(in_use.lock)锁文件
+      if (!lockF.exists()) { // 构造锁文件失败,则退出执行
         lockF.deleteOnExit();
         deletionHookAdded = true;
       }
@@ -730,13 +736,13 @@ public abstract class Storage extends StorageInfo {
         String lockingJvmName = Path.WINDOWS ? "" : (" " + file.readLine());
         LOG.error("It appears that another node " + lockingJvmName
             + " has already locked the storage directory: " + root, oe);
-        file.close();
+        file.close(); // 已经有其他程序获得了锁,则关闭锁文件,返回null
         return null;
       } catch(IOException e) {
         LOG.error("Failed to acquire lock on " + lockF
             + ". If this storage directory is mounted via NFS, " 
             + "ensure that the appropriate nfs lock services are running.", e);
-        file.close();
+        file.close(); // 读取锁文件失败,则关闭锁文件,抛出异常
         throw e;
       }
       if (!deletionHookAdded) {
@@ -754,6 +760,9 @@ public abstract class Storage extends StorageInfo {
      * 
      * @throws IOException
      */
+    /**
+     * 释放锁,关闭channel.
+     * */
     public void unlock() throws IOException {
       if (this.lock == null)
         return;

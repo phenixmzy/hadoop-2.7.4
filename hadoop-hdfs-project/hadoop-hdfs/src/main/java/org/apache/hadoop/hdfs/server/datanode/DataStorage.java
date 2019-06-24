@@ -82,6 +82,13 @@ import com.google.common.util.concurrent.Futures;
  * <p>
  * @see Storage
  */
+/**
+ * DataNode最重要的功能是管理磁盘上存储的HDFS数据块.DataNode将这个管理功能分为两个部分:
+ * DataStorage用于管理与组织磁盘存储目录;
+ * FsDatasetImpl则管理和组织数据块及其元数据文件;
+ *
+ *
+ * */
 @InterfaceAudience.Private
 public class DataStorage extends Storage {
 
@@ -118,6 +125,15 @@ public class DataStorage extends Storage {
   private boolean initialized = false;
   
   // Maps block pool IDs to block pool storage
+  // 注意:这里使用的是Collections.synchronizedMap,而不是ConcurrentHashMap进行同步.
+
+  // Collections.synchronizedMap会对整个map对象的所有方法进行同步,但比 HashTable的粒度小一点;
+  // SynchronizedMap的put封装了HashMap的put方法,并加上互斥锁保证了安全性.
+
+  // ConcurrentHashMap同步粒度比上面两者都小,性能也比上两者好好多;
+  // JDK1.8的ConcurrentHashMap取消了segments字段,采用了transient volatile HashEntry<K,V>[] table保存数据.
+  // 这样对每个table数组元素加锁,因此可以减少并发冲突的概率,提高并发性能.
+  // 所以ConcurrentHashMap的put并发性更好,因此相同工作下ConcurrentHashMap花费时间更少.
   private final Map<String, BlockPoolSliceStorage> bpStorageMap
       = Collections.synchronizedMap(new HashMap<String, BlockPoolSliceStorage>());
 
@@ -269,11 +285,27 @@ public class DataStorage extends Storage {
     }
   }
 
+  /**
+   * 分析初始化目录,正常启动后，写入响应的VERSION目录属性文件.
+   * 1 根据传入的startOpt 操作,分析当前StorageDirectory的状态(StorageState),并根据不同的状态进行对应的操作.
+   * eg:NOT_FORMATTED ->format,
+   *  NON_EXISTENT -> throw Exception,
+   *  NORMAL -> nothing do and break,
+   *  otherwise -> StorageDirectory#doRecover
+   *
+   *  2 doTransition 分析处于什么状态以及是否需要转换fs状态,如果需要则执行.如果按常规启动会返回false.
+   *
+   *  3 写入目录基本属性文件(VERSION)
+   *
+   *  该方法整个处理有单独的StorageDirectory对象锁进行隔离，独立线程处理.
+   *
+   */
   private StorageDirectory loadStorageDirectory(DataNode datanode,
       NamespaceInfo nsInfo, File dataDir, StartupOption startOpt,
       List<Callable<StorageDirectory>> callables) throws IOException {
     StorageDirectory sd = new StorageDirectory(dataDir, null, false);
     try {
+      // 1 根据传入的startOpt 操作,分析当前StorageDirectory的状态
       StorageState curState = sd.analyzeStorage(startOpt, this);
       // sd is locked but not opened
       switch (curState) {
@@ -289,7 +321,7 @@ public class DataStorage extends Storage {
             + ". Formatting...");
         format(sd, nsInfo, datanode.getDatanodeUuid());
         break;
-      default:  // recovery part is common
+      default:  // recovery part is common (对于其他状态的情况,调用StorageDirectory#doRecover 恢复到NORMAL状态)
         sd.doRecover(curState);
       }
 
@@ -297,6 +329,7 @@ public class DataStorage extends Storage {
       // Each storage directory is treated individually.
       // During startup some of them can upgrade or roll back
       // while others could be up-to-date for the regular startup.
+      // doTransition 分析处于什么状态以及是否需要转换fs状态,如果需要则执行.如果按常规启动会返回false.
       if (!doTransition(sd, nsInfo, startOpt, callables, datanode.getConf())) {
 
         // 3. Update successfully loaded storage.
@@ -383,6 +416,8 @@ public class DataStorage extends Storage {
    * @param dataDirs array of data storage directories
    * @param startOpt startup option
    * @return a list of successfully loaded storage directories.
+   *
+   * addStorageLocations -> loadDataStorage -> loadStorageDirectory
    */
   @VisibleForTesting
   synchronized List<StorageDirectory> addStorageLocations(DataNode datanode,
@@ -401,6 +436,9 @@ public class DataStorage extends Storage {
     }
   }
 
+  /**
+   * 初始化dataDirs列表.
+   * */
   private List<StorageLocation> loadDataStorage(DataNode datanode,
       NamespaceInfo nsInfo, Collection<StorageLocation> dataDirs,
       StartupOption startOpt, ExecutorService executor) throws IOException {
@@ -413,6 +451,7 @@ public class DataStorage extends Storage {
           // It first ensures the datanode level format is completed.
           final List<Callable<StorageDirectory>> callables
               = Lists.newArrayList();
+          //分析初始化目录,正常启动后，写入响应的VERSION目录属性文件.
           final StorageDirectory sd = loadStorageDirectory(
               datanode, nsInfo, root, startOpt, callables);
           if (callables.isEmpty()) {
@@ -560,6 +599,13 @@ public class DataStorage extends Storage {
    * @param startOpt startup option
    * @throws IOException on error
    */
+  /**
+   *  分析特定块池的storage目录.如果有必要,则从previous恢复.如果需要,根据命名空间信息执行fs状态转换.
+   *  这个方法应该会从多个DN线程之间同步.
+   *
+   *  这个方法用于在存储目录上初始化指定池块.
+   *
+   * */
   void recoverTransitionRead(DataNode datanode, NamespaceInfo nsInfo,
       Collection<StorageLocation> dataDirs, StartupOption startOpt) throws IOException {
     if (this.initialized) {
@@ -569,7 +615,7 @@ public class DataStorage extends Storage {
       // mark DN storage is initialized
       this.initialized = true;
     }
-
+    // 调用addStorageLocations对DataNode存储空间进行初始化
     if (addStorageLocations(datanode, nsInfo, dataDirs, startOpt).isEmpty()) {
       throw new IOException("All specified directories are failed to load.");
     }
@@ -746,12 +792,20 @@ public class DataStorage extends Storage {
    * @param startOpt  startup option
    * @return true if the new properties has been written.
    */
+  /**
+   * 分析处于什么状态以及是否需要转换fs状态,如果需要则执行.
+   * 如果被指定是回滚操作，执行doRollback;
+   * 如果this.LV > LAYOUT_VERSION
+   * 如果this.LV = LAYOUT_VERSION，按常规启动;
+   *
+   * */
   private boolean doTransition(StorageDirectory sd, NamespaceInfo nsInfo,
       StartupOption startOpt, List<Callable<StorageDirectory>> callables,
       Configuration conf) throws IOException {
-    if (startOpt == StartupOption.ROLLBACK) {
+    if (startOpt == StartupOption.ROLLBACK) { //如果启动选项是ROLLBACK，则调用doRollback进行回滚操作
       doRollback(sd, nsInfo); // rollback if applicable
     }
+    //检查升级是否成功
     readProperties(sd);
     checkVersionUpgradable(this.layoutVersion);
     assert this.layoutVersion >= HdfsConstants.DATANODE_LAYOUT_VERSION :
@@ -761,6 +815,7 @@ public class DataStorage extends Storage {
       DataNodeLayoutVersion.supports(
           LayoutVersion.Feature.FEDERATION, layoutVersion);
     // For pre-federation version - validate the namespaceID
+    // 不支持联邦部署时,验证namespaceID是否匹配,不匹配则抛出异常
     if (!federationSupported &&
         getNamespaceID() != nsInfo.getNamespaceID()) {
       throw new IOException("Incompatible namespaceIDs in "
@@ -770,6 +825,7 @@ public class DataStorage extends Storage {
     }
     
     // For version that supports federation, validate clusterID
+    // 支持联邦部署时,验证namespaceID是否匹配,不匹配则抛出异常
     if (federationSupported
         && !getClusterID().equals(nsInfo.getClusterID())) {
       throw new IOException("Incompatible clusterIDs in "
@@ -778,12 +834,14 @@ public class DataStorage extends Storage {
     }
 
     // regular start up.
+    // 磁盘版本号与代码版本号相同,则DataNode正常启动.
     if (this.layoutVersion == HdfsConstants.DATANODE_LAYOUT_VERSION) {
       createStorageID(sd, layoutVersion);
       return false; // need to write properties
     }
 
     // do upgrade
+    // 磁盘版本号小于DataNode支持的版本号,尝试升级操作.
     if (this.layoutVersion > HdfsConstants.DATANODE_LAYOUT_VERSION) {
       if (federationSupported) {
         // If the existing on-disk layout version supports federation,
@@ -799,6 +857,7 @@ public class DataStorage extends Storage {
     // than the version supported by datanode. This should have been caught
     // in readProperties(), even if rollback was not carried out or somehow
     // failed.
+    // 磁盘版本号大于DataNode支持的版本号,则抛出异常
     throw new IOException("BUG: The stored LV = " + this.getLayoutVersion()
         + " is newer than the supported LV = "
         + HdfsConstants.DATANODE_LAYOUT_VERSION);

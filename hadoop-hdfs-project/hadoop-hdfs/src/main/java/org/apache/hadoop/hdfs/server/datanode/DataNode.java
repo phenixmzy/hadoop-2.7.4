@@ -1371,6 +1371,19 @@ public class DataNode extends ReconfigurableBase
    * Initializes the {@link #data}. The initialization is done only once, when
    * handshake with the the first namenode is completed.
    */
+  /**
+   * BPOfferService中的BPServiceActor类与命名空间的NameNode握手成功后，调用Datanode#initStorage初始化该命名空间的块池.
+   * 然后调用DataStorage#recoverTransitionRead来执行块池存储的初始化操作.
+   * 初始化操作流程:
+   * DataNode
+   *  #initStorage ->
+   * DataStorage
+   *  #recoverTransitionRead ->
+   *  #addStorageLocations ->
+   *  #loadDataStorage ->
+   *  #loadStorageDirectory
+   *
+   * */
   private void initStorage(final NamespaceInfo nsInfo) throws IOException {
     final FsDatasetSpi.Factory<? extends FsDatasetSpi<?>> factory
         = FsDatasetSpi.Factory.getFactory(conf);
