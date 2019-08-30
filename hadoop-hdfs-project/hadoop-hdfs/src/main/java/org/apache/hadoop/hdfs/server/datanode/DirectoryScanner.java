@@ -559,7 +559,7 @@ public class DirectoryScanner implements Runnable {
    */
   @VisibleForTesting
   void reconcile() throws IOException {
-    scan();
+    scan(); //收集磁盘上与内存中数据块的差异信息
     for (Entry<String, LinkedList<ScanInfo>> entry : diffs.entrySet()) {
       String bpid = entry.getKey();
       LinkedList<ScanInfo> diff = entry.getValue();

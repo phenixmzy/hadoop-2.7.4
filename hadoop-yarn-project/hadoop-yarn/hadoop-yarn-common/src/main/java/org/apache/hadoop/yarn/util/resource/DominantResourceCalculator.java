@@ -23,9 +23,9 @@ import org.apache.hadoop.yarn.api.records.Resource;
 
 /**
  * A {@link ResourceCalculator} which uses the concept of  
- * <em>dominant resource</em> to compare multi-dimensional resources.
+ * <em>dominant resource(支配资源)</em> to compare multi-dimensional(多维) resources.
  *
- * Essentially the idea is that the in a multi-resource environment, 
+ * Essentially(本质上) the idea is that the in a multi-resource environment,
  * the resource allocation should be determined by the dominant share 
  * of an entity (user or queue), which is the maximum share that the 
  * entity has been allocated of any resource. 

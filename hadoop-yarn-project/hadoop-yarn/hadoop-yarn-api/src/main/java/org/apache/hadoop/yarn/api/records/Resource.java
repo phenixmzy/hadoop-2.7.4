@@ -29,13 +29,15 @@ import org.apache.hadoop.yarn.util.Records;
  * cluster.</p>
  * 
  * <p>Currently it models both <em>memory</em> and <em>CPU</em>.</p>
- * 
+ *
  * <p>The unit for memory is megabytes. CPU is modeled with virtual cores
  * (vcores), a unit for expressing parallelism. A node's capacity should
  * be configured with virtual cores equal to its number of physical cores. A
  * container should be requested with the number of cores it can saturate, i.e.
  * the average number of threads it expects to have runnable at a time.</p>
- * 
+ *
+ * 一个节点的容量应该被把虚拟核配置与物理核数相等.
+ *
  * <p>Virtual cores take integer values and thus currently CPU-scheduling is
  * very coarse.  A complementary axis for CPU requests that represents processing
  * power will likely be added in the future to enable finer-grained resource

@@ -66,10 +66,10 @@ import com.google.common.annotations.VisibleForTesting;
  */
 class BlockPoolSlice {
   static final Log LOG = LogFactory.getLog(BlockPoolSlice.class);
+  private final File currentDir; // StorageDirectory/current/bpid/current
 
   private final String bpid;
   private final FsVolumeImpl volume; // volume to which this BlockPool belongs to
-  private final File currentDir; // StorageDirectory/current/bpid/current
   // directory where finalized replicas are stored
   private final File finalizedDir;
   private final File lazypersistDir;
