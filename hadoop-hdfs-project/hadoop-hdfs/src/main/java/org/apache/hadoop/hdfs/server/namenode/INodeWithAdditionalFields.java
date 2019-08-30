@@ -30,6 +30,19 @@ import com.google.common.base.Preconditions;
  * {@link INode} with additional fields including id, name, permission,
  * access time and modification time.
  */
+/**
+ *  定义了字段:id, name, permission, features, access time and modification time.
+ *
+ *  PermissionStatusFormat:
+ *  枚举的定义,用于解析long 类型的permission;
+ *  long类型的前16位用于表示模式(mode),中间25位用于表示用户组标示(group),最后23位用于存放用户名标示(user).
+ *
+ *  SerialNumberManager:
+ *  在HDFS中,用户名和用户标识的对应关系、用户组名和用户组标识的对应关系都保存在SerialNumberManager中.
+ *  通过SerialNumberManager,NameNode不必在 INode对象中保存字符串形式的用户名和用户组,只需将整型的用户名标识和用户组标识
+ *  放入permission字段即可.
+ *
+ * */
 @InterfaceAudience.Private
 public abstract class INodeWithAdditionalFields extends INode
     implements LinkedElement {

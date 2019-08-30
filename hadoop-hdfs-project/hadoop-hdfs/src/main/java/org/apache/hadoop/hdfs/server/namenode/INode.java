@@ -49,6 +49,18 @@ import com.google.common.base.Preconditions;
  * This is a base INode class containing common fields for file and 
  * directory inodes.
  */
+/**
+ * INode被保存在内存中,代表文件/数据块的层次结构.该类包含了file-inode and directory-inode的共有的基本属性.
+ *
+ * 从另外一方面来说,INode是整个INode体系的根接口,它是一个抽象类,包含了:
+ * 父节点对象的引用,文件/目录名,用户组,访问权限,最后修改时间,上次访问时间,完整路径名,文件扩展属性等.
+ *
+ * 还需要注意的是,INode类的设计采用了模板模式.
+ * INode类定义的方法大多为两种:
+ * 1 用final定义修饰的接口方法;
+ * 2 abstract的抽象方法.抽象方法会留给子类实现;
+ *
+ * */
 @InterfaceAudience.Private
 public abstract class INode implements INodeAttributes, Diff.Element<byte[]> {
   public static final Log LOG = LogFactory.getLog(INode.class);
