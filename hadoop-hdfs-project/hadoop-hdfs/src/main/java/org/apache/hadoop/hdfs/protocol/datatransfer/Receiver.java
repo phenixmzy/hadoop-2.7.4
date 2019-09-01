@@ -45,6 +45,7 @@ import org.apache.htrace.TraceScope;
 /** Receiver */
 /**
  * 一个抽象类,封装了DataTransferProtocol的执行操作,用于执行远程节点发起的流式接口请求.
+ * 其是一个抽象接口,提供了解析Sender请求操作码的Op对应的方法,以及processOp来出来对应的Op请求．
  * */
 @InterfaceAudience.Private
 @InterfaceStability.Evolving

@@ -55,10 +55,14 @@ import com.google.protobuf.Message;
 
 /** Sender */
 /**
- * 用于向远端Datanode发起DataTransferProtocol的请求.
+ * 用于通过IO流向远端Datanode发起DataTransferProtocol里面读数据的请求.Datanode接收到这个请求后,会调用Receiver对应的方法
+ * 执行Op请求的操作.
  * 所有接口方法操作大致以下流程:
- * 1 使用Protocol对方法参数进行序列化;
- * 2 通过send()发送 DataTransferProtocol的版本号,Op码,Protocol序列化后的方法参数
+ * 1 使用ProtoBuf将方法参数进行序列化,然后用一个枚举类Op描述调用的是什么方法,
+ * 2 通过send()发送 DataTransferProtocol的版本号,Op和ProtoBuf序列化后的方法参数.
+ *
+ *
+ *
  * */
 @InterfaceAudience.Private
 @InterfaceStability.Evolving
@@ -123,7 +127,7 @@ public class Sender implements DataTransferProtocol {
       .setCachingStrategy(getCachingStrategy(cachingStrategy))
       .build();
     // 1.把Op操作发送远端,描述当前操作为READ_BLOCK
-    // 2.同时发送序列化后的proto
+    // 2.同时发送序列化后的参数proto
     send(out, Op.READ_BLOCK, proto);
   }
   
