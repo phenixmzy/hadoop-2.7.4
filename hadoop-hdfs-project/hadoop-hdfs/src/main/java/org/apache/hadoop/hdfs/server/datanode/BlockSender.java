@@ -93,6 +93,13 @@ import com.google.common.base.Preconditions;
  *  "LastPacketInBlock" set to true or with a zero length. If there is 
  *  no checksum error, it replies to DataNode with OP_STATUS_CHECKSUM_OK.
  */
+/**
+ * 数据块的发送主要是由BlockSender类来执行的.BlockSender中数据块的发送过程包括:发送准备,发送数据块以及清理工作.
+ * 发送准备-构造函数
+ * 预读取与丢失-managerOsCache
+ * 发送数据块-sendBlock
+ *
+ * */
 class BlockSender implements java.io.Closeable {
   static final Log LOG = DataNode.LOG;
   static final Log ClientTraceLog = DataNode.ClientTraceLog;
@@ -202,6 +209,12 @@ class BlockSender implements java.io.Closeable {
        * When using DataNode defaults, we use a heuristic where we only
        * drop the cache for large reads.
        */
+      /**
+       * 1 readahead与dropBehind的 处理:
+       * 如果cachingStrategy==Null,则按照配置文件设置 dropCacheBehindLargeReads= dfs.datanode.drop.cache.behind.reads 而
+       * readaheadLength= dfs.datanode.readahead.bytes 默认4MB;
+       * 如果用户通过cachingStrategy设置了两个字段,则按照这两个字段初始化读取操作;
+       * */
       if (cachingStrategy.getDropBehind() == null) {
         this.dropCacheBehindAllReads = false;
         this.dropCacheBehindLargeReads =
@@ -236,6 +249,12 @@ class BlockSender implements java.io.Closeable {
       // is constructed, the last partial checksum maybe overwritten by the
       // append, the BlockSender need to use the partial checksum before
       // the append write.
+      /**
+       * 如果在构造BlockSender之后立即发生追加写入，则最后一个部分校验和可能被追加覆盖,
+       * 因此BlockSender需要在追加写入之前使用部分校验和(ReplicaBeingWritten,FinalizedReplica )。
+       * 2 检查与赋值:
+       * 检查当前Datanode上被读取数据块的时间戳，数据块文件的长度等状态是否正常.
+       * */
       ChunkChecksum chunkChecksum = null;
       final long replicaVisibleLength;
       synchronized(datanode.data) { 
@@ -276,6 +295,10 @@ class BlockSender implements java.io.Closeable {
 
       // transferToFully() fails on 32 bit platforms for block sizes >= 2GB,
       // use normal transfer in those cases
+      /**
+       * 3 是否开启了transferTo模式:
+       * 默认为true.transferTo机制需要在后面零拷贝数据传输.
+       * */
       this.transferToAllowed = datanode.getDnConf().transferToAllowed &&
         (!is32Bit || length <= Integer.MAX_VALUE);
 
@@ -289,6 +312,10 @@ class BlockSender implements java.io.Closeable {
        * False,  True: will verify checksum
        * False, False: throws IOException file not found
        */
+      /**
+       * 4 获取checksum信息:
+       * 从meta文件中获取当前数据块的校验算法，校验和长度，多少字节产生一个校验值，也就是校验块的大小.
+       * */
       DataChecksum csum = null;
       if (verifyChecksum || sendChecksum) {
         LengthInputStream metaIn = null;
@@ -340,7 +367,10 @@ class BlockSender implements java.io.Closeable {
       /*
        * If chunkSize is very large, then the metadata file is mostly
        * corrupted. For now just truncate bytesPerchecksum to blockLength.
-       */       
+       */
+      /**
+       * 如果Chunksize(数据块) 非常大（10*1024*1024=10MB）,而元数据大多损坏,则把bytesPerchecksum 截断为blockLength
+       * */
       int size = csum.getBytesPerChecksum();
       if (size > 10*1024*1024 && size > replicaVisibleLength) {
         csum = DataChecksum.newDataChecksum(csum.getChecksumType(),
@@ -366,6 +396,14 @@ class BlockSender implements java.io.Closeable {
       }
       
       // Ensure read offset is position at the beginning of chunk
+      // - 将offset位置设置在校验块的边界上,也就是校验块的起始地址.
+      /**
+       * 5 计算offset以及endOffset:
+       * offset变量用于表示读取的数据在数据的起始地址；
+       * endOffset则用于标识结束位置；
+       * 由于读取位置往往不会落在某个校验块的起始位置，所以在准备工作中需要确保offset在校验块的 起始位置，
+       * endOffset在校验块的 结束位置.这样读取时可以以校验块为单位,方便校验和的擦澡.
+       * */
       offset = startOffset - (startOffset % chunkSize);
       if (length >= 0) {
         // Ensure endOffset points to end of chunk.
@@ -383,7 +421,10 @@ class BlockSender implements java.io.Closeable {
       }
       endOffset = end;
 
-      // seek to the right offsets
+      // seek to the right offsets -将校验文件的坐标移动到offset对应的位置上
+      /**
+       * 6 将数据块与校验和文件的offset都移动到指定位置
+       * */
       if (offset > 0 && checksumIn != null) {
         long checksumSkip = (offset / chunkSize) * checksumSize;
         // note blockInStream is seeked when created below
@@ -392,11 +433,13 @@ class BlockSender implements java.io.Closeable {
           IOUtils.skipFully(checksumIn, checksumSkip);
         }
       }
+      //packet序列号设置为0
       seqno = 0;
 
       if (DataNode.LOG.isDebugEnabled()) {
         DataNode.LOG.debug("replica=" + replica);
       }
+      //将数据块文件的坐标移动到offset位置
       blockIn = datanode.data.getBlockInputStream(block, offset); // seek to offset
       if (blockIn instanceof FileInputStream) {
         blockInFd = ((FileInputStream)blockIn).getFD();
@@ -809,12 +852,40 @@ class BlockSender implements java.io.Closeable {
    * Manage the OS buffer cache by performing read-ahead
    * and drop-behind.
    */
+  /**
+   * BlockSender在读取数据块之前，会先调用manageOsCache方法执行预读取(read-ahead)操作以挺高读取效率.
+   *
+   * 预读取操作:
+   * 预读取操作就是将数据块文件提前读取到操作系统的缓存中,这样当BlockSender到文件系统中读取数据块时,
+   * 可以直接从操作系统的缓存中读取数据,比直接从磁盘上读取要快很多.
+   *
+   * 但是OS的缓存空间也是非常有限的,所以需要调用managerOsCache方法将不再使用的数据块从缓存中丢弃(drop-behind),为新的数据挪出空间.
+   * BlockSender在读取数据时,使用了预读取以及丢弃两个特性.
+   *
+   * 触发预读取的两种情况:
+   * 以下两种情况会触发ReadaheadPool#readaheadStream方法触发一个预读取操作:
+   * 1 HDFS管理员设置了预读取的长度(默认是 4MB)并且设置了所有操作都使用预读取；
+   * 2 当前读取是一个长读取(超过256KB的读取);
+   * 预读取操作会从磁盘文件上预读取部分数据块文件的数据到操作系统的缓存中.
+   *
+   * 丢弃操作的两种情况:
+   * managerOsCache处理管理预读取操作还会处理丢弃操作.
+   * 1 如果dropCacheBehindAllReads=true(即是所有读操作后都丢弃);
+   * 2 当前读取是一个大读取时;
+   *
+   * 划分丢弃内容:
+   * managerOsCache根据以下方法划分丢弃的内容.
+   * 如果下一次读取数据的坐标offset大于下一次丢弃操作的开始坐标,则将lastCacheDropOffset(上一次丢弃操作的结束位置)和
+   * offset之间的数据全部从缓存中丢弃,因为这些数据Datanode已经读取了,不需要放在缓存中了.
+   *
+   * */
   private void manageOsCache() throws IOException {
     // We can't manage the cache for this block if we don't have a file
     // descriptor to work with.
     if (blockInFd == null) return;
 
     // Perform readahead if necessary
+    // 按条件触发预读取操作
     if ((readaheadLength > 0) && (datanode.readaheadPool != null) &&
           (alwaysReadahead || isLongRead())) {
       curReadahead = datanode.readaheadPool.readaheadStream(
@@ -824,10 +895,13 @@ class BlockSender implements java.io.Closeable {
 
     // Drop what we've just read from cache, since we aren't
     // likely to need it again
+    // 丢弃刚才从缓存中读取的数据,因为不再需要使用这些数据
     if (dropCacheBehindAllReads ||
         (dropCacheBehindLargeReads && isLongRead())) {
+      // 丢弃数据的位置
       long nextCacheDropOffset = lastCacheDropOffset + CACHE_DROP_INTERVAL_BYTES;
       if (offset >= nextCacheDropOffset) {
+        // 如果下一次读取数据的位置大于丢弃数据的位置,则将读取数据位置前的数据数据全部丢弃
         long dropLength = offset - lastCacheDropOffset;
         NativeIO.POSIX.getCacheManipulator().posixFadviseIfPossible(
             block.getBlockName(), blockInFd, lastCacheDropOffset,

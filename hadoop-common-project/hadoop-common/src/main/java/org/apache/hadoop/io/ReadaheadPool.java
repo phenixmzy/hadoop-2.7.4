@@ -203,6 +203,7 @@ public class ReadaheadPool {
       // It's also possible that we'll end up requesting readahead on some
       // other FD, which may be wasted work, but won't cause a problem.
       try {
+        // 调用fadivise()系统调用来完成预读取操作
         NativeIO.POSIX.getCacheManipulator().posixFadviseIfPossible(identifier,
             fd, off, len, NativeIO.POSIX.POSIX_FADV_WILLNEED);
       } catch (IOException ioe) {
