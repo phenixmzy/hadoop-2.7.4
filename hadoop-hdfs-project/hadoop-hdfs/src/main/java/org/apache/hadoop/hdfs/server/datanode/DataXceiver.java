@@ -506,11 +506,11 @@ class DataXceiver extends Receiver implements Runnable {
   }
 
   @Override
-  public void readBlock(final ExtendedBlock block,
-      final Token<BlockTokenIdentifier> blockToken,
+  public void readBlock(final ExtendedBlock block, //要读取的数据块
+      final Token<BlockTokenIdentifier> blockToken, //数据块的访问令牌
       final String clientName,
-      final long blockOffset,
-      final long length,
+      final long blockOffset, //要读取数据在数据块中的位置
+      final long length, //读取数据的长度
       final boolean sendChecksum,
       final CachingStrategy cachingStrategy) throws IOException {
     previousOpClientName = clientName;
