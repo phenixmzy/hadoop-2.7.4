@@ -108,6 +108,7 @@ public class DataTransferThrottler {
 
       if ( now < curPeriodEnd ) {
         // Wait for next period so that curReserve can be increased.
+        // 等待至下一个周期,curReserver可以增加
         try {
           wait( curPeriodEnd - now );
         } catch (InterruptedException e) {
@@ -118,11 +119,11 @@ public class DataTransferThrottler {
         }
       } else if ( now <  (curPeriodStart + periodExtension)) {
         curPeriodStart = curPeriodEnd;
-        curReserve += bytesPerPeriod;
+        curReserve += bytesPerPeriod; // 增加剩余请求量
       } else {
         // discard the prev period. Throttler might not have
         // been used for a long time.
-        curPeriodStart = now;
+        curPeriodStart = now; //长时间没有使用节流器,重置节流器
         curReserve = bytesPerPeriod - bytesAlreadyUsed;
       }
     }
