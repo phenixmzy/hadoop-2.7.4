@@ -66,6 +66,9 @@ import com.google.common.annotations.VisibleForTesting;
  * may copies it to another site. If a throttler is provided,
  * streaming throttling is also supported.
  **/
+/**
+ * BlockReceiver接收一个Block并写入到本地磁盘,同时可能会拷贝到其他节点上.
+ * */
 class BlockReceiver implements Closeable {
   public static final Log LOG = DataNode.LOG;
   static final Log ClientTraceLog = DataNode.ClientTraceLog;
@@ -1270,6 +1273,7 @@ class BlockReceiver implements Closeable {
 
     /**
      * Thread to process incoming acks.
+     * 处理输入的确认信息.
      * @see java.lang.Runnable#run()
      */
     @Override
@@ -1280,23 +1284,24 @@ class BlockReceiver implements Closeable {
         long totalAckTimeNanos = 0;
         boolean isInterrupted = false;
         try {
-          Packet pkt = null;
-          long expected = -2;
-          PipelineAck ack = new PipelineAck();
-          long seqno = PipelineAck.UNKOWN_SEQNO;
+          Packet pkt = null; // 记录当前处理的数据包
+          long expected = -2; // 数据包的序列化
+          PipelineAck ack = new PipelineAck(); // 数据包的响应消息
+          long seqno = PipelineAck.UNKOWN_SEQNO; // 数据包响应的序列号
           long ackRecvNanoTime = 0;
           try {
             if (type != PacketResponderType.LAST_IN_PIPELINE && !mirrorError) {
               // read an ack from downstream datanode
-              ack.readFields(downstreamIn);
+              ack.readFields(downstreamIn); // 从下游节点的输出流中读入一个响应
               ackRecvNanoTime = System.nanoTime();
               if (LOG.isDebugEnabled()) {
                 LOG.debug(myString + " got " + ack);
               }
-              // Process an OOB ACK.
+              // Process an OOB ACK.- 判断响应消息是否是OOB消息,例如下游节点重启
               Status oobStatus = ack.getOOBStatus();
               if (oobStatus != null) {
                 LOG.info("Relaying an out of band ack of type " + oobStatus);
+                // sendAckUpstream - 将OOB消息转发给上游节点处理
                 sendAckUpstream(ack, PipelineAck.UNKOWN_SEQNO, 0L, 0L,
                     PipelineAck.combineHeader(datanode.getECN(),
                       Status.SUCCESS));
@@ -1306,13 +1311,16 @@ class BlockReceiver implements Closeable {
             }
             if (seqno != PipelineAck.UNKOWN_SEQNO
                 || type == PacketResponderType.LAST_IN_PIPELINE) {
+              // 从ackQueue队列中取出待处理的数据包
               pkt = waitForAckHead(seqno);
               if (!isRunning()) {
                 break;
               }
               expected = pkt.seqno;
+              // 判断当前接收的数据包响应是否匹配待处理的数据包
               if (type == PacketResponderType.HAS_DOWNSTREAM_IN_PIPELINE
                   && seqno != expected) {
+                // 如果不匹配则抛出异常
                 throw new IOException(myString + "seqno: expected=" + expected
                     + ", received=" + seqno);
               }
@@ -1341,7 +1349,7 @@ class BlockReceiver implements Closeable {
             isInterrupted = true;
           } catch (IOException ioe) {
             if (Thread.interrupted()) {
-              isInterrupted = true;
+              isInterrupted = true; // 如果从下游节点读取数据时抛出异常,则将mirrorrError设置为true
             } else if (ioe instanceof EOFException && !packetSentInTime()) {
               // The downstream error was caused by upstream including this
               // node not sending packet in time. Let the upstream determine
@@ -1362,7 +1370,7 @@ class BlockReceiver implements Closeable {
             }
           }
 
-          if (Thread.interrupted() || isInterrupted) {
+          if (Thread.interrupted() || isInterrupted) { // 如果线程中断,则将running设置为false,停止当前线程运行
             /*
              * The receiver thread cancelled this thread. We could also check
              * any other status updates from the receiver thread (e.g. if it is
@@ -1381,23 +1389,25 @@ class BlockReceiver implements Closeable {
 
           if (lastPacketInBlock) {
             // Finalize the block and close the block file
+            // 如果数据响应是数据块的最后一个包,则提交这个数据块
             finalizeBlock(startTime);
           }
 
+          // 复制下游节点的数据包响应,加入当前数据节点的状态,并发送给上游节点
           Status myStatus = pkt != null ? pkt.ackStatus : Status.SUCCESS;
           sendAckUpstream(ack, expected, totalAckTimeNanos,
             (pkt != null ? pkt.offsetInBlock : 0),
             PipelineAck.combineHeader(datanode.getECN(), myStatus));
           if (pkt != null) {
-            // remove the packet from the ack queue
+            // remove the packet from the ack queue - 已经完成响应处理的数据包,从ackQueue队列中移除
             removeAckHead();
           }
         } catch (IOException e) {
           LOG.warn("IOException in BlockReceiver.run(): ", e);
           if (running) {
-            datanode.checkDiskErrorAsync();
+            datanode.checkDiskErrorAsync(); // 检测当前节点上的数据是否有错
             LOG.info(myString, e);
-            running = false;
+            running = false; // 设置running标志位位false,停止PacketResponder线程的执行.
             if (!Thread.interrupted()) { // failure not caused by interruption
               receiverThread.interrupt();
             }
@@ -1405,8 +1415,8 @@ class BlockReceiver implements Closeable {
         } catch (Throwable e) {
           if (running) {
             LOG.info(myString, e);
-            running = false;
-            receiverThread.interrupt();
+            running = false; // 设置running标志位位false
+            receiverThread.interrupt(); // 中断PacketResponder线程
           }
         }
       }
@@ -1499,26 +1509,28 @@ class BlockReceiver implements Closeable {
         long totalAckTimeNanos, long offsetInBlock, int myHeader)
         throws IOException {
       final int[] replies;
-      if (ack == null) {
+      if (ack == null) { // 如果下游节点发送的是OOB消息,则保留下游节点消息内容
         // A new OOB response is being sent from this node. Regardless of
         // downstream nodes, reply should contain one reply.
         replies = new int[] { myHeader };
-      } else if (mirrorError) { // ack read error
+      } else if (mirrorError) { // ack read error - 如果是当前节点从下游节点读取响应消息异常
+        // 将当前Datanode的错误记录在响应消息中
         int h = PipelineAck.combineHeader(datanode.getECN(), Status.SUCCESS);
         int h1 = PipelineAck.combineHeader(datanode.getECN(), Status.ERROR);
         replies = new int[] {h, h1};
-      } else {
+      } else { // 其他流程
         short ackLen = type == PacketResponderType.LAST_IN_PIPELINE ? 0 : ack
             .getNumOfReplies();
         replies = new int[ackLen + 1];
-        replies[0] = myHeader;
-        for (int i = 0; i < ackLen; ++i) {
+        replies[0] = myHeader; // 将当前数据的状态放入响应中
+        for (int i = 0; i < ackLen; ++i) { // 将下游数据节点的状态放入响应中
           replies[i + 1] = ack.getHeaderFlag(i);
         }
         // If the mirror has reported that it received a corrupt packet,
         // do self-destruct to mark myself bad, instead of making the
         // mirror node bad. The mirror is guaranteed to be good without
         // corrupt data on disk.
+        // 如果上游节点检测到校验和错误,那么当前节点发送的数据有错误,则停止BlockReceiver以及PacketResponder线程
         if (ackLen > 0 && PipelineAck.getStatusFromHeader(replies[1]) ==
           Status.ERROR_CHECKSUM) {
           throw new IOException("Shutting down writer and responder "
@@ -1526,6 +1538,7 @@ class BlockReceiver implements Closeable {
               + "thread is corrupt");
         }
       }
+      // 构造新的数据包响应消息
       PipelineAck replyAck = new PipelineAck(seqno, replies,
           totalAckTimeNanos);
       if (replyAck.isSuccess()
@@ -1533,6 +1546,7 @@ class BlockReceiver implements Closeable {
         replicaInfo.setBytesAcked(offsetInBlock);
       }
       // send my ack back to upstream datanode
+      // 将数据包响应消息发送给上游节点
       long begin = Time.monotonicNow();
       replyAck.write(upstreamOut);
       upstreamOut.flush();
@@ -1547,6 +1561,7 @@ class BlockReceiver implements Closeable {
 
       // If a corruption was detected in the received data, terminate after
       // sending ERROR_CHECKSUM back.
+      // 如果当前节点检测到校验和错误,则停止BlockReceiver以及PacketResponder线程
       Status myStatus = PipelineAck.getStatusFromHeader(myHeader);
       if (myStatus == Status.ERROR_CHECKSUM) {
         throw new IOException("Shutting down writer and responder "
