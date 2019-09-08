@@ -56,6 +56,17 @@ import org.apache.hadoop.util.Time;
  * Periodically scans the data directories for block and block metadata files.
  * Reconciles the differences with block information maintained in the dataset.
  */
+/**
+ * DirectoryScanner的主要任务是定期扫描磁盘上的数据块、元数据文件,检查磁盘数据块、元数据文件是否 与 数据集(FsDataImpl)
+ * 中保存的是否一致.如果不一致则对FsDataImpl中的信息进行更新.
+ * 注意,DirectoryScanner只会检查内存和磁盘上FLNALIZED状态的数据块是否一致.
+ *
+ * DirectoryScanner对象会定期在线程对象masterThread上触发扫描任务,这个扫描任务上有DirectoryScanner.reconcile方法执行.
+ * reconcile会首先调用scan方法收集磁盘上数据块与内存中的数据块的差异信息,并把这些差异信息保存在diffs字段中.
+ * scan方法在获取磁盘上存储的数据块时使用了reportCompileThreadPool线程池,异步地完成磁盘数据块的扫描任务.
+ * reconcile方法拿到scan方法更新的diffs对象后,调用FsDataset的checkAndUpdate方法,更新FsDatasetImpl保存的数据块副本信息,
+ * 完成与磁盘上数据副本的同步操作.
+ * */
 @InterfaceAudience.Private
 public class DirectoryScanner implements Runnable {
   private static final Log LOG = LogFactory.getLog(DirectoryScanner.class);
@@ -66,9 +77,9 @@ public class DirectoryScanner implements Runnable {
   private static final String START_MESSAGE_WITH_THROTTLE = START_MESSAGE
       + " and throttle limit of %dms/s";
 
-  private final FsDatasetSpi<?> dataset;
-  private final ExecutorService reportCompileThreadPool;
-  private final ScheduledExecutorService masterThread;
+  private final FsDatasetSpi<?> dataset; // FsDatasetImpl
+  private final ExecutorService reportCompileThreadPool; //一个线程池,用于异步收集磁盘上数据块信息
+  private final ScheduledExecutorService masterThread; //主线程,定期调用DirectoryScanner.run方法,去执行整个扫描逻辑
   private final long scanPeriodMsecs;
   private final int throttleLimitMsPerSec;
   private volatile boolean shouldRun = false;
@@ -89,6 +100,8 @@ public class DirectoryScanner implements Runnable {
   final AtomicLong timeWaitingMs = new AtomicLong(0L);
   /**
    * The complete list of block differences indexed by block pool ID.
+   *
+   * 描述磁盘上保存的数据块信息与内存之间差异的数据结构,在扫描的过程中更新,扫描结束后把diffs更新到FsDatasetImp对象上.
    */
   @VisibleForTesting
   final ScanInfoPerBlockPool diffs = new ScanInfoPerBlockPool();
