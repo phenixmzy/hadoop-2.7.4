@@ -302,25 +302,28 @@ class BPOfferService {
   void verifyAndSetNamespaceInfo(NamespaceInfo nsInfo) throws IOException {
     writeLock();
     try {
-      if (this.bpNSInfo == null) {
-        this.bpNSInfo = nsInfo;
+      if (this.bpNSInfo == null) { // 表明当前BPServiceActor对应的NameNode是第一个响应握手的NameNode.
+        this.bpNSInfo = nsInfo; // 给bpNSInfo赋值
         boolean success = false;
 
         // Now that we know the namespace ID, etc, we can pass this to the DN.
         // The DN can now initialize its local storage if we are the
         // first BP to handshake, etc.
+        // 赋值之后获得了nsInfo里面的 namespace ID等信息,并传递给DN,之后并能初始化本地存储.
         try {
-          dn.initBlockPool(this);
+          dn.initBlockPool(this); // 初始化本地命名空间对应的块池的本地存储
           success = true;
         } finally {
           if (!success) {
             // The datanode failed to initialize the BP. We need to reset
             // the namespace info so that other BPService actors still have
             // a chance to set it, and re-initialize the datanode.
+            // 如果初始化失败,reset bpNSInfo,等待下一个NameNode的响应
             this.bpNSInfo = null;
           }
         }
-      } else {
+      } else { // 命名空间中定义的另一个NameNode已经提前注册并初始化本地存储,之后只需将当期注册信息与已有的注册信息比较
+        // 确认Blockpool ID, Namespace ID, Cluster ID
         checkNSEquality(bpNSInfo.getBlockPoolID(), nsInfo.getBlockPoolID(),
             "Blockpool ID");
         checkNSEquality(bpNSInfo.getNamespaceID(), nsInfo.getNamespaceID(),

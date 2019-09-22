@@ -44,16 +44,26 @@ import com.google.common.collect.Sets;
  * Creation, removal, starting, stopping, shutdown on BPOfferService
  * objects must be done via APIs in this class.
  */
+/**
+ * BlockPoolManager负责管理本地DataNode上所有的BPOfferService实例,对外提供添加,删除,启动,停止,关闭BPOfferService类的接口.
+ * 所有对BPOfferService的操作,都必须通过BlockPoolManager类提供的方法来执行.
+ *
+ * BlockPoolManager对象的初始化是在DataNode#startDataNode(),然后调用BlockPoolManager#refreshNamenodes()方法完成对
+ * BlockPoolManager的构造.
+ *
+ * BLockPoolManager最重要的功能就是维护Datanode上所有BPOfferService对象的引用,同时对外提供多种检索BlockOfferService的方式.
+ * bpByNameserviceId 与 bpByBlockPoolId 两个属性为最重要的两个属性.
+ * */
 @InterfaceAudience.Private
 class BlockPoolManager {
   private static final Log LOG = DataNode.LOG;
   
   private final Map<String, BPOfferService> bpByNameserviceId =
-    Maps.newHashMap();
+    Maps.newHashMap(); // 命名空间id与BPOfferService的映射
   private final Map<String, BPOfferService> bpByBlockPoolId =
-    Maps.newHashMap();
+    Maps.newHashMap(); // 块池id与BPOfferService的映射
   private final List<BPOfferService> offerServices =
-    Lists.newArrayList();
+    Lists.newArrayList(); // 保存了所有的BPOfferService对象
 
   private final DataNode dn;
 
@@ -146,7 +156,16 @@ class BlockPoolManager {
       bpos.join();
     }
   }
-  
+  /**
+   * 用于根据HDFS配置添加,删除,以及更新命名空间.在BlockPoolMananger实现中,就是对指定命名空间的BPOfferService引用进行更新.
+   * 其分如下几步:
+   * 1 构造三个队列,分别是:toRefresh, toAdd, toRemove
+   * 2 处理toAdd队列
+   * 3 处理toRemove队列
+   * 4 处理toRefresh队列
+   *
+   * 以上所有步骤均 由doRefreshNamenodes方法实现.
+   * */
   void refreshNamenodes(Configuration conf)
       throws IOException {
     LOG.info("Refresh request received for nameservices: " + conf.get
@@ -164,6 +183,11 @@ class BlockPoolManager {
       Map<String, Map<String, InetSocketAddress>> addrMap) throws IOException {
     assert Thread.holdsLock(refreshNamenodesLock);
 
+    /**
+     * 1 构造三个队列,分别是:toAdd, toRefresh,  toRemove
+     * 三个队列分别表示添加,更新,删除BPOfferService. 函数的参数 addrMap变量保存了配置的命名空间列表,bpByNameServiceId变量
+     * 则保存了当前BlockPoolMananger中已有的命名空间列表.
+     * */
     Set<String> toRefresh = Sets.newLinkedHashSet();
     Set<String> toAdd = Sets.newLinkedHashSet();
     Set<String> toRemove;

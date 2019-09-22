@@ -43,6 +43,9 @@ import com.google.common.collect.Maps;
 /**
  * Manage Incremental Block Reports (IBRs).
  */
+/**
+ * 增量数据块上报管理器.
+ * */
 @InterfaceAudience.Private
 class IncrementalBlockReportManager {
   private static final Logger LOG = LoggerFactory.getLogger(

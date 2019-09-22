@@ -1334,6 +1334,10 @@ public class DataNode extends ReconfigurableBase
    * @param bpos Block pool offer service
    * @throws IOException if the NN is inconsistent with the local storage.
    */
+  /**
+   * Block Pools 已经成功连接到NN.初始化命名空间对应块池的本地存储,在检查clusterID的一致性后,会在BlockPoolManager中注册
+   * 当前池对应的BPOfferService对象,初始化BlockScanner和DirectoryScanner对象.
+   * */
   void initBlockPool(BPOfferService bpos) throws IOException {
     NamespaceInfo nsInfo = bpos.getNamespaceInfo();
     if (nsInfo == null) {
@@ -1341,14 +1345,14 @@ public class DataNode extends ReconfigurableBase
           + " should have retrieved namespace info before initBlockPool.");
     }
     
-    setClusterId(nsInfo.clusterID, nsInfo.getBlockPoolID());
+    setClusterId(nsInfo.clusterID, nsInfo.getBlockPoolID()); // 检查clusterID
 
     // Register the new block pool with the BP manager.
     blockPoolManager.addBlockPool(bpos);
     
     // In the case that this is the first block pool to connect, initialize
     // the dataset, block scanners, etc.
-    initStorage(nsInfo);
+    initStorage(nsInfo); // 初始化FSDatasetImpl, BlockScanner 等
 
     // Exclude failed disks before initializing the block pools to avoid startup
     // failures.
@@ -1356,7 +1360,7 @@ public class DataNode extends ReconfigurableBase
 
     data.addBlockPool(nsInfo.getBlockPoolID(), conf);
     blockScanner.enableBlockPoolId(bpos.getBlockPoolId());
-    initDirectoryScanner(conf);
+    initDirectoryScanner(conf); // 初始化DirectoryScanner对象
   }
 
   BPOfferService[] getAllBpOs() {
