@@ -494,22 +494,36 @@ class BPOfferService {
    * @param actor the actor which received the heartbeat
    * @param nnHaState the HA-related heartbeat contents
    */
+  /**
+   * 用于处理心跳响应中携带的NN-HA状态.
+   * 一种情况是,如果原来是Standby Namenode 切换成 Active Namenode:
+   * 为了防止脑裂(两个NN都返回声明自己是ActiveNameNode),NameNode心跳响应中的NNHAStatusHeartbeat带了一个txid字段,
+   * 只有大的txid的Namenode才能作为ActiveNameNode.
+   *
+   * 另一种情况是原先是Active状态的Namenode切换成Standby Namenode,则直接将BPOfferService.bpServiceToActive字段赋值为null.
+   * */
   void updateActorStatesFromHeartbeat(
       BPServiceActor actor,
       NNHAStatusHeartbeat nnHaState) {
     writeLock();
     try {
+      // NameNode携带的txid
       final long txid = nnHaState.getTxId();
 
+      // 当前NamNode是否声称自己为Active
       final boolean nnClaimsActive =
           nnHaState.getState() == HAServiceState.ACTIVE;
+
+      // BPOfferService是否认为当前NamNode为Active NameNode
       final boolean bposThinksActive = bpServiceToActive == actor;
+
+      // 当前NameNode携带的txid是否大于原Active NameNode携带的txid
       final boolean isMoreRecentClaim = txid > lastActiveClaimTxId;
 
-      if (nnClaimsActive && !bposThinksActive) {
+      if (nnClaimsActive && !bposThinksActive) { // 原来的Standby 声明自己为Active,发送状态切换
         LOG.info("Namenode " + actor + " trying to claim ACTIVE state with " +
             "txid=" + txid);
-        if (!isMoreRecentClaim) {
+        if (!isMoreRecentClaim) { // 当前有两个NameNode 声称自己都是Active,但是根据txid的比较,当前NameNode的请求过时
           // Split-brain scenario - an NN is trying to claim active
           // state when a different NN has already claimed it with a higher
           // txid.
@@ -517,21 +531,21 @@ class BPOfferService {
               txid + " but there was already a more recent claim at txid=" +
               lastActiveClaimTxId);
           return;
-        } else {
-          if (bpServiceToActive == null) {
+        } else { // 当前的请求是最新的请求
+          if (bpServiceToActive == null) { // BPOfferService还没有保存active namenode
             LOG.info("Acknowledging ACTIVE Namenode " + actor);
-          } else {
+          } else { // 当前NameNode的请求是最新的请求
             LOG.info("Namenode " + actor + " taking over ACTIVE state from " +
                 bpServiceToActive + " at higher txid=" + txid);
           }
           bpServiceToActive = actor;
         }
-      } else if (!nnClaimsActive && bposThinksActive) {
+      } else if (!nnClaimsActive && bposThinksActive) { // 原来Active状态的NameNode现在声称自己为Standby
         LOG.info("Namenode " + actor + " relinquishing ACTIVE state with " +
             "txid=" + nnHaState.getTxId());
         bpServiceToActive = null;
       }
-
+      // 更新lastActiveClaimTxId
       if (bpServiceToActive == actor) {
         assert txid >= lastActiveClaimTxId;
         lastActiveClaimTxId = txid;

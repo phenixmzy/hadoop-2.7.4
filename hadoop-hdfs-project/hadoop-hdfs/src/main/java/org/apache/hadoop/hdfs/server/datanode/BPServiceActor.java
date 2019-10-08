@@ -414,7 +414,18 @@ class BPServiceActor implements Runnable {
     }
     return cmd;
   }
-  
+
+  /**
+   * 1. DataNode向NameNode发送的心跳信息,描述了Datanode当前的情况.
+   * 主要包括: DataNode的注册信息, Datanode存储信息, 缓存信息, 当前Datanode写文件的连接数, 以及读写数据使用的线程数等.
+   *
+   * 2. NameNode收到DataNode的心跳后,会响应一个HeartbeatResponse.
+   * 这个HeartbeatResponse包含了一个DatanodeCommand的数组,用来携带Namenode对Datanode的名字节点的指令.
+   *
+   * 同时心跳响应中还包含一个NNHAStatusHeartbeat对象,用来标识当前Namenode的HA状态.Datanode会使用这个字段来确定
+   * BPOfferService当中哪个BPServiceActor对应的Namenode是Active.
+   *
+   * */
   HeartbeatResponse sendHeartBeat() throws IOException {
     scheduler.scheduleNextHeartbeat();
     StorageReport[] reports =
@@ -540,6 +551,7 @@ class BPServiceActor implements Runnable {
           // -- Bytes remaining
           //
           if (!dn.areHeartbeatsDisabledForTests()) {
+            /** 1 调用sendHeartBeat()向Namenode发送心跳 */
             HeartbeatResponse resp = sendHeartBeat();
             assert resp != null;
             dn.getMetrics().addHeartbeat(scheduler.monotonicNow() - startTime);
@@ -550,6 +562,7 @@ class BPServiceActor implements Runnable {
             // Important that this happens before processCommand below,
             // since the first heartbeat to a new active might have commands
             // that we should actually process.
+            /** 2 对心跳响应中携带的NameNode的HA状态进行处理 **/
             bpos.updateActorStatesFromHeartbeat(
                 this, resp.getNameNodeHaState());
             state = resp.getNameNodeHaState().getState();
@@ -558,6 +571,7 @@ class BPServiceActor implements Runnable {
               handleRollingUpgradeStatus(resp);
             }
 
+            /** 3 最后调用processCommand()方法处理NameNode下发的命令 **/
             long startProcessCommands = monotonicNow();
             if (!processCommand(resp.getCommands()))
               continue;
