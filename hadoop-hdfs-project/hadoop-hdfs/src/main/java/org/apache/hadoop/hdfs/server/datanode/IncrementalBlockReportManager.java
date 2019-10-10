@@ -44,7 +44,7 @@ import com.google.common.collect.Maps;
  * Manage Incremental Block Reports (IBRs).
  */
 /**
- * 增量数据块上报管理器.
+ * 增量数据块上报管理器.承担了所有数据块增量上报的操作.
  * */
 @InterfaceAudience.Private
 class IncrementalBlockReportManager {
@@ -103,6 +103,9 @@ class IncrementalBlockReportManager {
    * DN reports smaller incremental changes to its block list for each storage.
    * This map contains the pending changes not yet to be reported to the NN.
    */
+  /**
+   * 维护DataStorage上存储的两次汇报之间新添加和删除的数据块.
+   * */
   private final Map<DatanodeStorage, PerStorageIBR> pendingIBRs
       = Maps.newHashMap();
 
