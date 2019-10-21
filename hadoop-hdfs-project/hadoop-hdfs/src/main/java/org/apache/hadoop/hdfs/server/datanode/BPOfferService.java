@@ -59,6 +59,7 @@ class BPOfferService {
    * is registering with. This is assigned after
    * the first phase of the handshake.
    */
+  //当前BPOfferService服务的命名空间的信息,该信息与首次NamNode握手时获取
   NamespaceInfo bpNSInfo;
 
   /**
@@ -66,9 +67,10 @@ class BPOfferService {
    * This is assigned after the second phase of the
    * handshake.
    */
+  // 当前BPOfferService对应的块池在NamNode上的注册信息,这个注册信息是在DataNode注册阶段获得
   volatile DatanodeRegistration bpRegistration;
   
-  private final DataNode dn;
+  private final DataNode dn; // 当前DataNode对象的引用
 
   /**
    * A reference to the BPServiceActor associated with the currently
@@ -76,12 +78,14 @@ class BPOfferService {
    * this can be null. If non-null, this must always refer to a member
    * of the {@link #bpServices} list.
    */
+  // 当前BPOfferService认为Active 的NamNode对应的BPServiceActor对象
   private BPServiceActor bpServiceToActive = null;
   
   /**
    * The list of all actors for namenodes in this nameservice, regardless
    * of their active or standby states.
    */
+  // 当前命名空间中所有NamNode对应的BPServiceActor列表.
   private final List<BPServiceActor> bpServices =
     new CopyOnWriteArrayList<BPServiceActor>();
 
@@ -93,6 +97,7 @@ class BPOfferService {
    * ACTIVE state but with a too-low transaction ID. See HDFS-2627
    * for details. 
    */
+  // 每当收到一个NameNode传来的心跳时,就记录下最近的一个transactionId，用于防止脑裂出现.
   private long lastActiveClaimTxId = -1;
 
   private final ReentrantReadWriteLock mReadWriteLock =
