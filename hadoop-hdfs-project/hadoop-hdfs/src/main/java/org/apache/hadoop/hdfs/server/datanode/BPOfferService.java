@@ -219,7 +219,13 @@ class BPOfferService {
       readUnlock();
     }
   }
-  
+
+  /**
+   * 根据block, storageUuid, storageType三者生成一个ReportBadBlockAction，然后放到BPServiceActor的队列链表中.
+   * BPServiceActor内部实现生产-消费者,
+   * BPServiceActor.bpThreadEnqueue()方法把ReportBadBlockAction放入队列;
+   * BPServiceActor.processQueueMessages()方法则进行消费和处理;
+   * */
   void reportBadBlocks(ExtendedBlock block,
                        String storageUuid, StorageType storageType) {
     checkBlock(block);
@@ -315,6 +321,7 @@ class BPOfferService {
         // The DN can now initialize its local storage if we are the
         // first BP to handshake, etc.
         // 赋值之后获得了nsInfo里面的 namespace ID等信息,并传递给DN,之后并能初始化本地存储.
+        // 第一个NameNode的响应,这时已经知道命名空间id,就可以通过DataNode引用初始化DataNode的本地存储了.
         try {
           dn.initBlockPool(this); // 初始化本地命名空间对应的块池的本地存储
           success = true;
@@ -419,6 +426,9 @@ class BPOfferService {
   /**
    * Called by the DN to report an error to the NNs.
    */
+  /**
+   * 与reportBadBlocks方法实现一样.
+   * */
   void trySendErrorReport(int errCode, String errMsg) {
     for (BPServiceActor actor : bpServices) {
       ErrorReportAction errorReportAction = new ErrorReportAction 
@@ -624,11 +634,12 @@ class BPOfferService {
       // actor state by obtaining the lock
       LOG.info("DatanodeCommand action : DNA_REGISTER from " + actor.nnAddr
           + " with " + actor.state + " state");
+      // 如果NameNode返回的指令要求DataNode重新注册,则调用reRegister
       actor.reRegister();
       return false;
     }
     writeLock();
-    try {
+    try { // 针对当前actor状态(Active or Standby)调用不同的方法处理返回的指令
       if (actor == bpServiceToActive) {
         return processCommandFromActive(cmd, actor);
       } else {
