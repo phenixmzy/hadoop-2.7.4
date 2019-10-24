@@ -206,6 +206,8 @@ class BlockPoolManager {
       
       // Step 2. Any nameservices we currently have but are no longer present
       // need to be removed.
+      // 当前拥有的但不再存在的NameServices,需要removed.
+      // difference(bpByNameserviceId.keySet(), addrMap.keySet())
       toRemove = Sets.newHashSet(Sets.difference(
           bpByNameserviceId.keySet(), addrMap.keySet()));
       
@@ -224,11 +226,14 @@ class BlockPoolManager {
         for (String nsToAdd : toAdd) {
           ArrayList<InetSocketAddress> addrs =
             Lists.newArrayList(addrMap.get(nsToAdd).values());
+          // 调用createBPOS方法创建BPOfferService对象
           BPOfferService bpos = createBPOS(addrs);
+          // 把新建的BPOfferService对象加入bpByNameserviceId映射中
           bpByNameserviceId.put(nsToAdd, bpos);
           offerServices.add(bpos);
         }
       }
+      // 启动所有的BPOfferService,级联启动BPServiceActor的工作线程
       startAll();
     }
 
