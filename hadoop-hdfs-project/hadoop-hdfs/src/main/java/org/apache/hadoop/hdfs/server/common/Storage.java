@@ -264,9 +264,9 @@ public abstract class Storage extends StorageInfo {
     final File root;              // root directory
     // whether or not this dir is shared between two separate NNs for HA, or
     // between multiple block pools in the case of federation.
-    final boolean isShared;
+    final boolean isShared; // 当前目录是否共享,HA或联邦下,是否共享存储目录
     final StorageDirType dirType; // storage dir type
-    FileLock lock;                // storage lock
+    FileLock lock;                // storage lock 独占锁,用来支持Datanode或者Namenode线程独占存储目录的锁操作
 
     private String storageUuid = null;      // Storage directory identifier.
     
