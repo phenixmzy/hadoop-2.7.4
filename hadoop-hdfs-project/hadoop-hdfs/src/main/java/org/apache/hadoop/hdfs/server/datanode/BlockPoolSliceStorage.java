@@ -65,6 +65,18 @@ import com.google.common.collect.Lists;
  * 
  * @see Storage
  */
+/**
+ * 在HDFS联邦的架构中,一个DataNode可以保存多个命名空间的数据块,每个命名空间在DataNode磁盘上拥有一个独立的块池(DataPool),
+ * 这个块池会分布在DataNode的所有存储目录下（一般是每个裸盘指定的目录）,它们共同保存了这个块池在当前DataNode上的所有数据块.
+ * HDFS定义了BlockPoolSliceStorage类来管理DataNode上单个块池的存储空间.
+ * DataStorage类则定义了bpStorageMap字段来保存DataNode上所有块池BlockPoolSliceStorage对象的引用.
+ * 这个类提供一下功能:
+ * 格式化新的block pool storage
+ * 将存储状态恢复到一至的状态
+ * 升级期间获得快照
+ * snapshot回滚
+ *
+ * */
 @InterfaceAudience.Private
 public class BlockPoolSliceStorage extends Storage {
   static final String TRASH_ROOT_DIR = "trash";

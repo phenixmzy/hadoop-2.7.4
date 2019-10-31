@@ -87,6 +87,11 @@ import com.google.common.util.concurrent.Futures;
  * DataStorage用于管理与组织磁盘存储目录;
  * FsDatasetImpl则管理和组织数据块及其元数据文件;
  *
+ * 在HDFS联邦的架构中,一个DataNode可以保存多个命名空间的数据块,每个命名空间在DataNode磁盘上拥有一个独立的块池(DataPool),
+ * 这个块池会分布在DataNode的所有存储目录下（一般是每个裸盘指定的目录）,它们共同保存了这个块池在当前DataNode上的所有数据块.
+ * HDFS定义了BlockPoolSliceStorage类来管理DataNode上单个块池的存储空间.
+ * DataStorage类则定义了bpStorageMap字段来保存DataNode上所有块池BlockPoolSliceStorage对象的引用.
+ *
  *
  * */
 @InterfaceAudience.Private
@@ -614,7 +619,6 @@ public class DataStorage extends Storage {
       this.storageDirs = new ArrayList<StorageDirectory>(dataDirs.size());
       // mark DN storage is initialized
       this.initialized = true;
-    }
     // 调用addStorageLocations对DataNode存储空间进行初始化
     if (addStorageLocations(datanode, nsInfo, dataDirs, startOpt).isEmpty()) {
       throw new IOException("All specified directories are failed to load.");
