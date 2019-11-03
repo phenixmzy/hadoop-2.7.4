@@ -64,11 +64,16 @@ import com.google.common.annotations.VisibleForTesting;
  * 
  * This class is synchronized by {@link FsVolumeImpl}.
  */
+/**
+ * BlockPoolSlice服务管理指定块池(某个裸盘下目录比如:/data01/dfs/BP-135XXXX-XXXX/,/data02/dfs/BP-135XXXX-XXXX/)
+ * 的所有数据块.
+ * 块池在每个管理存储目录下都会有一个块池目录存储数据块,换句话说BlockPoolSlice管理的就是这个块池目录所有的数据块.
+ * */
 class BlockPoolSlice {
   static final Log LOG = LogFactory.getLog(BlockPoolSlice.class);
   private final File currentDir; // StorageDirectory/current/bpid/current
 
-  private final String bpid;
+  private final String bpid; // 记录当前BlockPoolSlice对应的块池id
   private final FsVolumeImpl volume; // volume to which this BlockPool belongs to
   // directory where finalized replicas are stored
   private final File finalizedDir;
@@ -81,7 +86,7 @@ class BlockPoolSlice {
   private final boolean deleteDuplicateReplicas;
   
   // TODO:FEDERATION scalability issue - a thread per DU is needed
-  private final DU dfsUsage;
+  private final DU dfsUsage; // DU类型,描述当前块池目录的磁盘使用情况
 
   /**
    * Create a blook pool slice 
