@@ -39,6 +39,10 @@ import com.google.common.annotations.VisibleForTesting;
  * This class is used by datanodes to maintain meta data of its replicas.
  * It provides a general interface for meta information of a replica.
  */
+/**
+ * ReplicaInfo是一个抽象类,用来描述DataNode上保存的数据块副本信息.
+ *
+ * */
 @InterfaceAudience.Private
 abstract public class ReplicaInfo extends Block implements Replica {
   
@@ -274,11 +278,11 @@ abstract public class ReplicaInfo extends Block implements Replica {
     }
     File meta = getMetaFile();
 
-    if (HardLink.getLinkCount(file) > numLinks) {
+    if (HardLink.getLinkCount(file) > numLinks) { // 移除数据块文件硬链接
       DataNode.LOG.info("CopyOnWrite for block " + this);
       unlinkFile(file, this);
     }
-    if (HardLink.getLinkCount(meta) > numLinks) {
+    if (HardLink.getLinkCount(meta) > numLinks) { // 移除校验文件硬链接
       unlinkFile(meta, this);
     }
     setUnlinked();

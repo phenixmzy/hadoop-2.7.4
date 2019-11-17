@@ -122,7 +122,7 @@ import com.google.common.collect.Sets;
 /**************************************************
  * FSDataset manages a set of data blocks.  Each block
  * has a unique name and an extent on disk.
- *
+ * FSDataset管理了一系列的数据块.每个数据块都有唯一一个块名存在于磁盘上.
  ***************************************************/
 @InterfaceAudience.Private
 class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
@@ -229,18 +229,27 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     return new LengthInputStream(new FileInputStream(meta), meta.length());
   }
     
-  final DataNode datanode;
-  final DataStorage dataStorage;
+  final DataNode datanode; // 当前数据节点的DataNode对象
+  final DataStorage dataStorage; // DataStorage对象的引用,在FsDatasetImpl中调用这个对象的开启和关闭存储空间回收站功能
+
+  // FsVolumeList对象的引用,FsDatasetImpl使用FsVolumeList对象提供的功能管理DataNode上的所有数据块,并且通过对volumes字段
+  // 的修改、添加、删除新的存储目录
   final FsVolumeList volumes;
+
+  // 在FsDatasetImpl中,对于每一个存储目录都会构造一个DataStorage对象,storageMap字段就是用来保存这些存储的,是storageUuid->DataStorage的映射,
+  // FsDatasetImpl可以通过storageUuid获取对应的DataStorage对象.
   final Map<String, DatanodeStorage> storageMap;
+
+  // 用于在DataNode磁盘存储上进行一些异步的IO操作
+  // 例如在进行删除数据块副本操作时,会调用FsDatasetAsyncDiskService.deleteAsync()异步地将数据块文件从磁盘上删除.
   final FsDatasetAsyncDiskService asyncDiskService;
   final Daemon lazyWriter;
-  final FsDatasetCache cacheManager;
+  final FsDatasetCache cacheManager; // 用于将数据块缓存到内存中的工具类
   private final Configuration conf;
   private final int validVolsRequired;
   private volatile boolean fsRunning;
 
-  final ReplicaMap volumeMap;
+  final ReplicaMap volumeMap; // ReplicaMap类型,用于记录DataNode上的所有数据块副本信息
   final Map<String, Set<Long>> deletingBlock;
   final RamDiskReplicaTracker ramDiskReplicaTracker;
   final RamDiskAsyncLazyPersistService asyncLazyPersistService;
@@ -1108,11 +1117,14 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
       FinalizedReplica replicaInfo, long newGS, long estimateBlockLen)
       throws IOException {
     // If the block is cached, start uncaching it.
+    // 如果副本被缓存了,则从缓存中移除副本
     cacheManager.uncacheBlock(bpid, replicaInfo.getBlockId());
     // unlink the finalized replica
+    // 存在硬链接的副本,先解除硬链接
     replicaInfo.unlinkBlock(1);
     
     // construct a RBW replica with the new GS
+    // 构造新的ReplicaInfo对象
     File blkfile = replicaInfo.getBlockFile();
     FsVolumeImpl v = (FsVolumeImpl)replicaInfo.getVolume();
     long bytesReserved = estimateBlockLen - replicaInfo.getNumBytes();
@@ -1135,6 +1147,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     File newmeta = newReplicaInfo.getMetaFile();
 
     // rename meta file to rbw directory
+    // 将检验和文件移动到rbw目录中
     if (LOG.isDebugEnabled()) {
       LOG.debug("Renaming " + oldmeta + " to " + newmeta);
     }
@@ -1147,6 +1160,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
 
     // rename block file to rbw directory
+    // 将数据块移动rbw目录中
     if (LOG.isDebugEnabled()) {
       LOG.debug("Renaming " + blkfile + " to " + newBlkFile
           + ", file length=" + blkfile.length());
@@ -1166,16 +1180,21 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
     
     // Replace finalized replica by a RBW replica in replicas map
+    // 更新volumeMap中的副本
     volumeMap.add(bpid, newReplicaInfo);
     v.reserveSpaceForRbw(bytesReserved);
     return newReplicaInfo;
   }
 
+  /**
+   * 这个方法是Block对应的ReplicaInfo对象进行检查,主要检查副本状态,时间戳,数据块文件长度是否正常.
+   * */
   private ReplicaInfo recoverCheck(ExtendedBlock b, long newGS, 
       long expectedBlockLen) throws IOException {
     ReplicaInfo replicaInfo = getReplicaInfo(b.getBlockPoolId(), b.getBlockId());
     
     // check state
+    // 检查副本状态,只有FINALIZED以及RBW状态才能进行追加写操作
     if (replicaInfo.getState() != ReplicaState.FINALIZED &&
         replicaInfo.getState() != ReplicaState.RBW) {
       throw new ReplicaNotFoundException(
@@ -1193,13 +1212,16 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
     
     // stop the previous writer before check a replica's length
+    //
     long replicaLen = replicaInfo.getNumBytes();
     if (replicaInfo.getState() == ReplicaState.RBW) {
       ReplicaBeingWritten rbw = (ReplicaBeingWritten)replicaInfo;
       // kill the previous writer
+      // 如果副本当前处于正在写状态,则更新写线程
       rbw.stopWriter(datanode.getDnConf().getXceiverStopTimeout());
       rbw.setWriter(Thread.currentThread());
       // check length: bytesRcvd, bytesOnDisk, and bytesAcked should be the same
+      // 确认bytesRcvd, bytesOnDisk, and bytesAcked 都相同
       if (replicaLen != rbw.getBytesOnDisk() 
           || replicaLen != rbw.getBytesAcked()) {
         throw new ReplicaAlreadyExistsException("RBW replica " + replicaInfo + 
@@ -1210,6 +1232,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
     
     // check block length
+    // 确认副本长度和期待长度相同,否则抛出异常
     if (replicaLen != expectedBlockLen) {
       throw new IOException("Corrupted replica " + replicaInfo + 
           " with a length of " + replicaLen + 
@@ -1223,17 +1246,18 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   public synchronized ReplicaHandler recoverAppend(
       ExtendedBlock b, long newGS, long expectedBlockLen) throws IOException {
     LOG.info("Recover failed append to " + b);
-
+    // 先调用recoveryCheck方法对Block副本进行检查
     ReplicaInfo replicaInfo = recoverCheck(b, newGS, expectedBlockLen);
 
     FsVolumeReference ref = replicaInfo.getVolume().obtainReference();
     ReplicaBeingWritten replica;
     try {
       // change the replica's state/gs etc.
-      if (replicaInfo.getState() == ReplicaState.FINALIZED) {
+      // 更改副本的状态以及时间戳
+      if (replicaInfo.getState() == ReplicaState.FINALIZED) {  // FINALIZED状态- 副本变为RBW状态
         replica = append(b.getBlockPoolId(), (FinalizedReplica) replicaInfo,
                          newGS, b.getNumBytes());
-      } else { //RBW
+      } else { //RBW状态-更新时间戳即可
         bumpReplicaGS(replicaInfo, newGS);
         replica = (ReplicaBeingWritten) replicaInfo;
       }
@@ -1289,6 +1313,12 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   }
 
   @Override // FsDatasetSpi
+  /**
+   * 当HDFS客户端发起写请求而创建一个副本时,这个副本将会放到rbw文件夹中,并设置为RBW状态，RBW状态的副本对于读线程是可见的.
+   * createRbw方法用于在rbw文件夹中创建一个副本.
+   * 这个方法是在当前Datanode来接收来自客户端的写数据请求或者追加写数据请求时,在BlockRecevier的构造方法中调用的.
+   * createRbw方法的实现与createTemporary的流程大致相同,不同的是副本存放在块池目录的rbw文件夹下,同时增加lazyPersist的支持.
+   * */
   public synchronized ReplicaHandler createRbw(
       StorageType storageType, ExtendedBlock b, boolean allowLazyPersist)
       throws IOException {
@@ -1305,6 +1335,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
       try {
         if (allowLazyPersist) {
           // First try to place the block on a transient volume.
+          // 首先尝试将block放置在一个临时的volume上
           ref = volumes.getNextTransientVolume(b.getNumBytes());
           datanode.getMetrics().incrRamDiskBlocksWrite();
         } else {
@@ -1337,6 +1368,11 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   }
 
   @Override // FsDatasetSpi
+  /**
+   * recoverRbw用于在恢复rbw状态的副本.并返回这个副本的信息.
+   * 这个方法是在DataNode进行数据流管道恢复操作时,在BlockReceiver的构造方法中调用.
+   * 调用万该方法后,数据流管道中的所有RBW状态副本的时间戳和文件长度就是同步了,可以继续通过数据流管道写入新的数据了.
+   * */
   public synchronized ReplicaHandler recoverRbw(
       ExtendedBlock b, long newGS, long minBytesRcvd, long maxBytesRcvd)
       throws IOException {
@@ -1354,10 +1390,14 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     LOG.info("Recovering " + rbw);
 
     // Stop the previous writer
+    // 1.停止副本原先的写入线程,并将当前线程更新为写入线程
     rbw.stopWriter(datanode.getDnConf().getXceiverStopTimeout());
     rbw.setWriter(Thread.currentThread());
 
+
     // check generation stamp
+    // 2 对时间戳进行检查,对rbw数据块的长度进行检查
+    // 2.1 检查时间戳范围,如果不在 b.getGenerationStamp()至newGS之间则抛出异常
     long replicaGenerationStamp = rbw.getGenerationStamp();
     if (replicaGenerationStamp < b.getGenerationStamp() ||
         replicaGenerationStamp > newGS) {
@@ -1368,6 +1408,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
     
     // check replica length
+    // 2.2 检查副本的长度,如果不在(minBytesRcvd, maxBytesRcvd)之间抛出异常
     long bytesAcked = rbw.getBytesAcked();
     long numBytes = rbw.getNumBytes();
     if (bytesAcked < minBytesRcvd || numBytes > maxBytesRcvd){
@@ -1396,6 +1437,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
       // Truncate the potentially corrupt portion.
       // If the source was client and the last node in the pipeline was lost,
       // any corrupt data written after the acked length can go unnoticed.
+      // 2.3 将副本中所有没有确认的数据包删除
       if (bytesOnDisk > bytesAcked) {
         final File replicafile = rbw.getBlockFile();
         truncateBlock(replicafile, rbw.getMetaFile(), bytesOnDisk, bytesAcked);
@@ -1404,6 +1446,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
       }
 
       // bump the replica's generation stamp to newGS
+      // 3 设置新的时间戳
       bumpReplicaGS(rbw, newGS);
     } catch (IOException e) {
       IOUtils.cleanup(null, ref);
@@ -1413,6 +1456,13 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   }
   
   @Override // FsDatasetSpi
+  /**
+   * 该方法用于将TEMPORARY状态的副本转为RBW状态.该方法用于将TEMPORARY状态的副本转为RBW状态.
+   * 这个方法调用司在当前DataNode从其他DataNode成功接收了复制(transfer)的数据块时,在BlockReceiver.receiveBlock方法中调用.
+   * 但为什么要做这个调用？
+   * 因为当前DataNode从其他DataNode接收数据时,处于TEMPORARY状态的副本是不完整的,并且对于读线程是不可以见的.
+   * 当数据块传输完成后,DataNode上的数据块完整了,也就是可以进行读操作了,这是需要将副本状态从TEMPORARY 转变为RBW.
+   * */
   public synchronized ReplicaInPipeline convertTemporaryToRbw(
       final ExtendedBlock b) throws IOException {
     final long blockId = b.getBlockId();
@@ -1424,12 +1474,14 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     final ReplicaInPipeline temp;
     {
       // get replica
+      // 获取副本并检查副本是否存在
       final ReplicaInfo r = volumeMap.get(b.getBlockPoolId(), blockId);
       if (r == null) {
         throw new ReplicaNotFoundException(
             ReplicaNotFoundException.NON_EXISTENT_REPLICA + b);
       }
       // check the replica's state
+      // 检查副本状态
       if (r.getState() != ReplicaState.TEMPORARY) {
         throw new ReplicaAlreadyExistsException(
             "r.getState() != ReplicaState.TEMPORARY, r=" + r);
@@ -1437,6 +1489,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
       temp = (ReplicaInPipeline)r;
     }
     // check generation stamp
+    // 检查副本时间戳是否正常
     if (temp.getGenerationStamp() != expectedGs) {
       throw new ReplicaAlreadyExistsException(
           "temp.getGenerationStamp() != expectedGs = " + expectedGs
@@ -1448,22 +1501,26 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     // temp.setWriter(Thread.currentThread());
 
     // check length
+    // 检查副本长度如果副本长度小于传入的ExtendedBlock长度,则抛出异常
     final long numBytes = temp.getNumBytes();
     if (numBytes < visible) {
       throw new IOException(numBytes + " = numBytes < visible = "
           + visible + ", temp=" + temp);
     }
     // check volume
+    // 检查副本所在存储目录的FsVolumeImpl是否存在,不存在则抛异常
     final FsVolumeImpl v = (FsVolumeImpl)temp.getVolume();
     if (v == null) {
       throw new IOException("r.getVolume() = null, temp="  + temp);
     }
     
     // move block files to the rbw directory
+    // 将副本从tmp目录移动到rbw目录
     BlockPoolSlice bpslice = v.getBlockPoolSlice(b.getBlockPoolId());
     final File dest = moveBlockFiles(b.getLocalBlock(), temp.getBlockFile(), 
         bpslice.getRbwDir());
     // create RBW
+    // 构造新的ReplicaInfo-RBW对象,并在volumeMap中更新
     final ReplicaBeingWritten rbw = new ReplicaBeingWritten(
         blockId, numBytes, expectedGs,
         v, dest.getParentFile(), Thread.currentThread(), 0);
@@ -1480,6 +1537,16 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   }
 
   @Override // FsDatasetSpi
+  /**
+   * 只处理RBW/Temporary 状态的数据块.
+   * 该方法用于在tmp文件夹中创建一个新的副本.其只处理RBW/TEMPORARY两种状态的副本.
+   * 当创建数据块副本是在数据块复制和集群数据块平衡过程中发起时,副本就会放置到tmp目录并且为TEMPORARY状态,
+   * TEMPORARY状态的副本对于读线程是不可见的.
+   *
+   * 它会当前DataNode接收其他DataNode写数据块的请求时,
+   * 在BlockReceiver的构造函数里面调用(replication or move 或者是TRANSFER_FINALIZED阶段).
+   * 成功创建TEMPORARY副本之后,Datanode就可以向该副本写入数据了.
+   * */
   public ReplicaHandler createTemporary(StorageType storageType,
       ExtendedBlock b, boolean isTransfer) throws IOException {
     long startTimeMs = Time.monotonicNow();
@@ -1535,12 +1602,15 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
           false);
     }
     synchronized (this) {
+      // 获取一个能保存这个副本的FsVolumeImpl引用-FsVolumeReference对象
       FsVolumeReference ref = volumes.getNextVolume(storageType, b
           .getNumBytes());
+      // 通过引用获取FsVolumeImpl对象
       FsVolumeImpl v = (FsVolumeImpl) ref.getVolume();
       // create a temporary file to hold block in the designated volume
       File f;
       try {
+        // 在该存储目录下的数据块所在块池的tmp子目录中创建数据块文件
         f = v.createTmpFile(b.getBlockPoolId(), b.getLocalBlock());
       } catch (IOException e) {
         IOUtils.cleanup(null, ref);
@@ -1548,6 +1618,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
       }
       ReplicaInPipeline newReplicaInfo = new ReplicaInPipeline(b.getBlockId(), b
           .getGenerationStamp(), v, f.getParentFile(), 0);
+      // 将新构造的ReplicaInPipeline对象放入FsDatasetImpl.volumeMap中
       volumeMap.add(b.getBlockPoolId(), newReplicaInfo);
       return new ReplicaHandler(newReplicaInfo, ref);
     }
@@ -1601,19 +1672,21 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   private synchronized FinalizedReplica finalizeReplica(String bpid,
       ReplicaInfo replicaInfo, boolean fsyncDir) throws IOException {
     FinalizedReplica newReplicaInfo = null;
+    // 如果副本处于恢复状态,并且恢复前的状态为FINALIZED,则直接将副本状态转换为FINALIZED即可
     if (replicaInfo.getState() == ReplicaState.RUR &&
        ((ReplicaUnderRecovery)replicaInfo).getOriginalReplica().getState() == 
          ReplicaState.FINALIZED) {
       newReplicaInfo = (FinalizedReplica)
              ((ReplicaUnderRecovery)replicaInfo).getOriginalReplica();
     } else {
+      // 对于其他情况,则首先获取FsVolumeImpl对象
       FsVolumeImpl v = (FsVolumeImpl)replicaInfo.getVolume();
       File f = replicaInfo.getBlockFile();
       if (v == null) {
         throw new IOException("No volume for temporary file " + f + 
             " for block " + replicaInfo);
       }
-
+      // 然后调用addFinalizedBlock方法将数据块移动至finalized目录下
       File dest = v.addFinalizedBlock(
           bpid, replicaInfo, f, replicaInfo.getBytesReserved());
       newReplicaInfo = new FinalizedReplica(replicaInfo, v, dest.getParentFile());
@@ -1632,8 +1705,9 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
         datanode.getMetrics().addRamDiskBytesWrite(replicaInfo.getNumBytes());
       }
     }
+    // 更新volumeMap中的副本信息
     volumeMap.add(bpid, newReplicaInfo);
-
+    // 返回构造的副本对象
     return newReplicaInfo;
   }
 
@@ -1686,9 +1760,10 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
 
   @Override
   public Map<DatanodeStorage, BlockListAsLongs> getBlockReports(String bpid) {
+    // 构造返回值对象
     Map<DatanodeStorage, BlockListAsLongs> blockReportsMap =
         new HashMap<DatanodeStorage, BlockListAsLongs>();
-
+    // 保存FINALIZED,RBW,RWR,RUR状态副本信息的Map对象
     Map<String, BlockListAsLongs.Builder> builders =
         new HashMap<String, BlockListAsLongs.Builder>();
 
@@ -1696,7 +1771,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     for (FsVolumeSpi v : curVolumes) {
       builders.put(v.getStorageID(), BlockListAsLongs.builder());
     }
-
+    // 只对FINALIZED,UnderConstruction[RBW,RWR,RUR]状态的副本,TEMPORARY状态的副本不进行汇报
     synchronized(this) {
       for (ReplicaInfo b : volumeMap.replicas(bpid)) {
         switch(b.getState()) {
@@ -1717,12 +1792,12 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
         }
       }
     }
-
+    // 通过finalized以及uc集合,构造返回值对象blockReportMap
     for (FsVolumeImpl v : curVolumes) {
       blockReportsMap.put(v.toDatanodeStorage(),
                           builders.get(v.getStorageID()).build());
     }
-
+    // 返回blockReportMap对象
     return blockReportsMap;
   }
 
@@ -2368,31 +2443,37 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   /** static version of {@link #initReplicaRecovery(RecoveringBlock)}. */
   static ReplicaRecoveryInfo initReplicaRecovery(String bpid, ReplicaMap map,
       Block block, long recoveryId, long xceiverStopTimeout) throws IOException {
+    // 从volumeMap中获取副本信息
     final ReplicaInfo replica = map.get(bpid, block.getBlockId());
     LOG.info("initReplicaRecovery: " + block + ", recoveryId=" + recoveryId
         + ", replica=" + replica);
 
     //check replica
+    // 确认副本是否存在
     if (replica == null) {
       return null;
     }
 
     //stop writer if there is any
+    // 如果有写线程则先停止写线程
     if (replica instanceof ReplicaInPipeline) {
       final ReplicaInPipeline rip = (ReplicaInPipeline)replica;
       rip.stopWriter(xceiverStopTimeout);
 
       //check replica bytes on disk.
+      // 确认接收的数据大于可见的数据
       if (rip.getBytesOnDisk() < rip.getVisibleLength()) {
         throw new IOException("getBytesOnDisk() < getVisibleLength(), rip="
             + rip);
       }
 
       //check the replica's files
+      // 检查副本文件
       checkReplicaFiles(rip);
     }
 
     //check generation stamp
+    // 检查副本时间戳
     if (replica.getGenerationStamp() < block.getGenerationStamp()) {
       throw new IOException(
           "replica.getGenerationStamp() < block.getGenerationStamp(), block="
@@ -2400,6 +2481,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
 
     //check recovery id
+    // 检查recovery id,确定不是一个过期的副本操作
     if (replica.getGenerationStamp() >= recoveryId) {
       throw new IOException("THIS IS NOT SUPPOSED TO HAPPEN:"
           + " replica.getGenerationStamp() >= recoveryId = " + recoveryId
@@ -2407,10 +2489,11 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
 
     //check RUR
+    // 构造一个ReplicaUnderRecovery对象,如果已经存在RUR对象,则更新recoveryId
     final ReplicaUnderRecovery rur;
     if (replica.getState() == ReplicaState.RUR) {
       rur = (ReplicaUnderRecovery)replica;
-      if (rur.getRecoveryID() >= recoveryId) {
+      if (rur.getRecoveryID() >= recoveryId) { // 这个判断要特别注意,这里要判断这个恢复操作是否是一个过期的或者重复的操作
         throw new RecoveryInProgressException(
             "rur.getRecoveryID() >= recoveryId = " + recoveryId
             + ", block=" + block + ", rur=" + rur);
@@ -2420,7 +2503,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
       LOG.info("initReplicaRecovery: update recovery id for " + block
           + " from " + oldRecoveryID + " to " + recoveryId);
     }
-    else {
+    else { // RUR对象不存在,则构造RUR对象,并更新volumeMap
       rur = new ReplicaUnderRecovery(replica, recoveryId);
       map.add(bpid, rur);
       LOG.info("initReplicaRecovery: changing replica state for "
@@ -2460,6 +2543,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
 
     //check replica's byte on disk
+    // 检查副本长度是否正常
     if (replica.getBytesOnDisk() != oldBlock.getNumBytes()) {
       throw new IOException("THIS IS NOT SUPPOSED TO HAPPEN:"
           + " replica.getBytesOnDisk() != block.getNumBytes(), block="
@@ -2467,9 +2551,11 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
 
     //check replica files before update
+    // 检查副本的数据块文件和校验文件是否匹配
     checkReplicaFiles(replica);
 
     //update replica
+    // 调用私有的updateReplicaUnderRecovery方法,将副本状态更新为目标状态
     final FinalizedReplica finalized = updateReplicaUnderRecovery(oldBlock
         .getBlockPoolId(), (ReplicaUnderRecovery) replica, recoveryId,
         newBlockId, newlength);
@@ -2493,6 +2579,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
     }
 
     //check replica files after update
+    // 检查转换finalized状态后的副本的数据块文件和校验文件是否匹配
     checkReplicaFiles(finalized);
 
     return finalized;
@@ -2530,7 +2617,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
       throw new IOException("rur.getNumBytes() < newlength = " + newlength
           + ", rur=" + rur);
     }
-    if (rur.getNumBytes() > newlength) {
+    if (rur.getNumBytes() > newlength) { // 如果数据块文件的长度大于目标长度,则调用truncate方法截短数据块文件,并重新计算校验和
       rur.unlinkBlock(1);
       truncateBlock(blockFile, metaFile, rur.getNumBytes(), newlength);
       if(!copyOnTruncate) {
@@ -2552,6 +2639,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
         // In theory, this rbw replica needs to reload last chunk checksum,
         // but it is immediately converted to finalized state within the same
         // lock, so no need to update it.
+        // 并将副本有RUR改为FINALIZED,更新volumeMap
         volumeMap.add(bpid, newReplicaInfo);
         finalizeReplica(bpid, newReplicaInfo, false);
       }
@@ -2607,12 +2695,13 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
   
   /**
    * Class for representing the Datanode volume information
+   * 用于描述FsVolumeImpl对应存储目录的的存储信息.
    */
   private static class VolumeInfo {
-    final String directory;
-    final long usedSpace; // size of space used by HDFS
-    final long freeSpace; // size of free space excluding reserved space
-    final long reservedSpace; // size of space reserved for non-HDFS and RBW
+    final String directory; // 存储目录的路径
+    final long usedSpace; // size of space used by HDFS - 存储目录中已经使用的空间
+    final long freeSpace; // size of free space excluding reserved space - 存储目录中可用的空间
+    final long reservedSpace; // size of space reserved for non-HDFS and RBW - 存储目录中预留的空间
 
     VolumeInfo(FsVolumeImpl v, long usedSpace, long freeSpace) {
       this.directory = v.toString();

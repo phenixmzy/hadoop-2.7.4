@@ -26,7 +26,8 @@ import org.apache.hadoop.hdfs.protocol.Block;
 import org.apache.hadoop.hdfs.server.datanode.ReplicaInfo;
 
 /**
- * Maintains the replica map. 
+ * Maintains the replica map.
+ * 只保存RBW和FINALIZED状态的副本.
  */
 class ReplicaMap {
   // Object using which this class is synchronized

@@ -66,6 +66,9 @@ import org.apache.hadoop.util.ReflectionUtils;
  * stores replicas for a data node.
  * The default implementation stores replicas on local drives. 
  */
+/**
+ * 定义了Datanode管理数据块的接口方法
+ * */
 @InterfaceAudience.Private
 public interface FsDatasetSpi<V extends FsVolumeSpi> extends FSDatasetMBean {
   /**

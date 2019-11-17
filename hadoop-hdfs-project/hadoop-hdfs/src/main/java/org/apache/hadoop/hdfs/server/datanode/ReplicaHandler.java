@@ -26,6 +26,9 @@ import java.io.IOException;
  * This class includes a replica being actively written and the reference to
  * the fs volume where this replica is located.
  */
+/**
+ * 这个是一个副本处理类的封装.包含了一个副本正在主动写入和对该副本进行保存的FS卷.
+ * */
 public class ReplicaHandler implements Closeable {
   private final ReplicaInPipelineInterface replica;
   private final FsVolumeReference volumeReference;

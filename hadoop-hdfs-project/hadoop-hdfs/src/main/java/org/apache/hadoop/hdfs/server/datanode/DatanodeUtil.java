@@ -113,11 +113,11 @@ public class DatanodeUtil {
    * @return
    */
   public static File idToBlockDir(File root, long blockId) {
-    int d1 = (int)((blockId >> 16) & 0xff);
-    int d2 = (int)((blockId >> 8) & 0xff);
+    int d1 = (int)((blockId >> 16) & 0xff); // blockId的第三个字节作为一级目录索引;
+    int d2 = (int)((blockId >> 8) & 0xff);  // blockId的第二个字节作为二级目录索引;
     String path = DataStorage.BLOCK_SUBDIR_PREFIX + d1 + SEP +
         DataStorage.BLOCK_SUBDIR_PREFIX + d2;
-    return new File(root, path);
+    return new File(root, path); // 构造存储路径并返回
   }
 
   /**

@@ -396,13 +396,14 @@ class FsVolumeList {
         new ArrayList<IOException>());
     List<Thread> blockPoolAddingThreads = new ArrayList<Thread>();
     for (final FsVolumeImpl v : volumes.get()) {
+        // 对于每一个FsVolumeImpl级联启动一个独立的线程
       Thread t = new Thread() {
         public void run() {
           try (FsVolumeReference ref = v.obtainReference()) {
             FsDatasetImpl.LOG.info("Scanning block pool " + bpid +
                 " on volume " + v + "...");
             long startTime = Time.monotonicNow();
-            v.addBlockPool(bpid, conf);
+            v.addBlockPool(bpid, conf); //调用fsVolumeImpl.addBlockPool()在对应存储目录下添加块池目录
             long timeTaken = Time.monotonicNow() - startTime;
             FsDatasetImpl.LOG.info("Time taken to scan block pool " + bpid +
                 " on " + v + ": " + timeTaken + "ms");
@@ -418,6 +419,7 @@ class FsVolumeList {
       blockPoolAddingThreads.add(t);
       t.start();
     }
+    // 等待左右线程完毕
     for (Thread t : blockPoolAddingThreads) {
       try {
         t.join();

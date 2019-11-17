@@ -142,10 +142,12 @@ class BlockPoolSlice {
     }
     // Use cached value initially if available. Or the following call will
     // block until the initial du command completes.
+    // 构建DU,用来统计块池目录的磁盘使用情况.
     this.dfsUsage = new DU(bpDir, conf, loadDfsUsed());
     this.dfsUsage.start();
 
     // Make the dfs usage to be saved during shutdown.
+    // 添加一个钩子,当DataNode进程结束时保存整个文件系统的磁盘使用信息.
     ShutdownHookManager.get().addShutdownHook(
       new Runnable() {
         @Override
@@ -276,6 +278,9 @@ class BlockPoolSlice {
     return DatanodeUtil.createTmpFile(b, f);
   }
 
+  /**
+   * 对于FINALIZED状态的副本创建,则使用addBlock方法实现.
+   * */
   File addBlock(Block b, File f) throws IOException {
     File blockDir = DatanodeUtil.idToBlockDir(finalizedDir, b.getBlockId());
     if (!blockDir.exists()) {
@@ -283,6 +288,7 @@ class BlockPoolSlice {
         throw new IOException("Failed to mkdirs " + blockDir);
       }
     }
+    // 在存储路径中创建数据块副本文件以及校验文件
     File blockFile = FsDatasetImpl.moveBlockFiles(b, f, blockDir);
     File metaFile = FsDatasetUtil.getMetaFile(blockFile, b.getGenerationStamp());
     dfsUsage.incDfsUsed(b.getNumBytes()+metaFile.length());
@@ -312,12 +318,18 @@ class BlockPoolSlice {
   }
 
 
-    
+  /**
+   * DataNode在启动时会调用该方法获取当前BlockPoolSlice持有的所有数据块副本的状态,
+   * DataNode类会使用一个ReplicaMap对象保存这些数据块副本的信息以及状态.
+   * 此外,由下面的方法执行逻辑可以知道,ReplicaMap只保存FINALIZED和RBW两种状态的数据块副本,而且这两种状态均调用
+   * addToReplicasMap方法出来finalized和rbw两个目录的是所有数据块副本.
+   * */
   void getVolumeMap(ReplicaMap volumeMap,
                     final RamDiskReplicaTracker lazyWriteReplicaMap)
       throws IOException {
     // Recover lazy persist replicas, they will be added to the volumeMap
     // when we scan the finalized directory.
+    // 恢复lazyPersist状态的副本,先将它们转变为FINALIZED状态
     if (lazypersistDir.exists()) {
       int numRecovered = moveLazyPersistReplicasToFinalized(lazypersistDir);
       FsDatasetImpl.LOG.info(
@@ -325,8 +337,10 @@ class BlockPoolSlice {
     }
 
     // add finalized replicas
+    // 将所有FINALIZED状态的副本加入ReplicaMap中
     addToReplicasMap(volumeMap, finalizedDir, lazyWriteReplicaMap, true);
     // add rbw replicas
+    // 将所有RBW状态的副本加入ReplicaMap中
     addToReplicasMap(volumeMap, rbwDir, lazyWriteReplicaMap, false);
   }
 
@@ -424,31 +438,36 @@ class BlockPoolSlice {
    * @param isFinalized true if the directory has finalized replicas;
    *                    false if the directory has rbw replicas
    */
+  /**
+   * 把指定目录下的副本添加到volume map(即是ReplicaMap)中.
+   * */
   void addToReplicasMap(ReplicaMap volumeMap, File dir,
                         final RamDiskReplicaTracker lazyWriteReplicaMap,
                         boolean isFinalized)
       throws IOException {
+    // 循环遍历指定目录下的所有文件
     File files[] = FileUtil.listFiles(dir);
     for (File file : files) {
       if (file.isDirectory()) {
+        // 如果是文件夹,则递归遍历
         addToReplicasMap(volumeMap, file, lazyWriteReplicaMap, isFinalized);
       }
-
+      //如果存在临时文件,则首先进行恢复操作
       if (isFinalized && FsDatasetUtil.isUnlinkTmpFile(file)) {
-        file = recoverTempUnlinkedBlock(file);
-        if (file == null) { // the original block still exists, so we cover it
+        file = recoverTempUnlinkedBlock(file); // 对临时文件进行恢复操作
+        if (file == null) { // the original block still exists, so we cover it -> 临时文件对应的源文件存在,则跳过该临时文件
           // in another iteration and can continue here
           continue;
         }
       }
-      if (!Block.isBlockFilename(file))
+      if (!Block.isBlockFilename(file)) // 如果不是块文件,也跳过
         continue;
       
       long genStamp = FsDatasetUtil.getGenerationStampFromFile(
           files, file);
       long blockId = Block.filename2id(file.getName());
       ReplicaInfo newReplica = null;
-      if (isFinalized) {
+      if (isFinalized) { // 1 如果是finalized目录下的文件,则将所有数据块加载为Finalized状态
         newReplica = new FinalizedReplica(blockId, 
             file.length(), genStamp, volume, file.getParentFile());
       } else {
@@ -460,10 +479,12 @@ class BlockPoolSlice {
         try {
           sc = new Scanner(restartMeta, "UTF-8");
           // The restart meta file exists
+          // 2 如果存在.restart文件,并且时间还在重启窗口内,则当前数据块副本可以恢复为RBW状态,将当前数据块加载为RBW状态
           if (sc.hasNextLong() && (sc.nextLong() > Time.now())) {
             // It didn't expire. Load the replica as a RBW.
             // We don't know the expected block length, so just use 0
             // and don't reserve any more space for writes.
+            // 把数据块加载为RBW状态
             newReplica = new ReplicaBeingWritten(blockId,
                 validateIntegrityAndSetLength(file, genStamp), 
                 genStamp, volume, file.getParentFile(), null, 0);
@@ -482,13 +503,14 @@ class BlockPoolSlice {
           }
         }
         // Restart meta doesn't exist or expired.
+        // 3 .restart文件不存在,则将该文件加载为RWR状态.
         if (loadRwr) {
           newReplica = new ReplicaWaitingToBeRecovered(blockId,
               validateIntegrityAndSetLength(file, genStamp),
               genStamp, volume, file.getParentFile());
         }
       }
-
+      // 将数据块信息放入volumeMap中
       ReplicaInfo oldReplica = volumeMap.get(bpid, newReplica.getBlockId());
       if (oldReplica == null) {
         volumeMap.add(bpid, newReplica);
