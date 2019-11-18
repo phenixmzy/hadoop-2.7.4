@@ -663,6 +663,10 @@ class BlockSender implements java.io.Closeable {
          * coding example. NEVER do it to drive a program logic. NEVER.
          * It was done here because the NIO throws an IOException for EPIPE.
          */
+        /**
+         * 出现异常会进行可以块标记,
+         * 这个与DiskChecker类似,都是在异常的场景中进行触发处理.可疑块被筛选出来之后,会经过runLoop方法的处理
+         * */
         String ioem = e.getMessage();
         if (!ioem.startsWith("Broken pipe") && !ioem.startsWith("Connection reset")) {
           LOG.error("BlockSender.sendChunks() exception: ", e);

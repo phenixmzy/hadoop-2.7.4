@@ -47,6 +47,10 @@ import org.slf4j.LoggerFactory;
  * VolumeScanner scans a single volume.  Each VolumeScanner has its own thread.<p/>
  * They are all managed by the DataNode's BlockScanner.
  */
+/**
+ * VolumeScanner扫描一个单独的磁盘卷.每个VolumeScanner都用于自己的线程.
+ * 它们都会被DataNode的BlockScanner所管理.它会由BlockScanner.addVolumeScanner方法所创建.
+ * */
 public class VolumeScanner extends Thread {
   public static final Logger LOG =
       LoggerFactory.getLogger(VolumeScanner.class);
@@ -127,6 +131,7 @@ public class VolumeScanner extends Thread {
   /**
    * Blocks which are suspect.
    * The scanner prioritizes scanning these blocks.
+   * 可疑块列表,scanner线程将会优先扫描这些块
    */
   private final LinkedHashSet<ExtendedBlock> suspectBlocks =
       new LinkedHashSet<ExtendedBlock>();
@@ -489,6 +494,13 @@ public class VolumeScanner extends Thread {
    * @return     The number of milliseconds to delay before running the loop
    *               again, or 0 to re-run the loop immediately.
    */
+  /**
+   * 进行可疑块扫描.
+   * 这个方法的处理逻辑主要有方面的意思:
+   * 1 从suspectBlock(可疑块列表)中选出一个待扫描块进行扫描.
+   * 2 如果suspectBlock没有可选的块了,则从BlockPool中进行选取,如果当前的BlockPool中的块已经遍历完毕,
+   * 则选取下一个BlockPool,继续遍历其中的块.
+   * */
   private long runLoop(ExtendedBlock suspectBlock) {
     long bytesScanned = -1;
     boolean scanError = false;
@@ -501,14 +513,18 @@ public class VolumeScanner extends Thread {
           scannedBytesSum, startMinute, curMinute)) {
         // If neededBytesPerSec is too low, then wait few seconds for some old
         // scannedBytes records to expire.
+        // 如果扫描块的带宽速率设置得太小导致不允许进行扫描操作,则返回需要等待的时间
         return 30000L;
       }
 
       // Find a usable block pool to scan.
+      // 寻找一个可用的BlockPool准备扫描
       if (suspectBlock != null) {
+        // 如果当前可疑块不为空,则设置为当前扫描的块
         block = suspectBlock;
-      } else {
+      } else { // 否则从BlockPool中选出一个待扫描的块
         if ((curBlockIter == null) || curBlockIter.atEnd()) {
+          // 如果当前BlockPool已经扫描到头了，则选取下一个BlockPool
           long timeout = findNextUsableBlockIter();
           if (timeout > 0) {
             LOG.trace("{}: no block pools are ready to scan yet.  Waiting " +
@@ -526,6 +542,7 @@ public class VolumeScanner extends Thread {
           return 0L;
         }
         try {
+          // 获取当前BlockPool中的下一个待扫描块
           block = curBlockIter.nextBlock();
         } catch (IOException e) {
           // There was an error listing the next block in the volume.  This is a
@@ -551,6 +568,7 @@ public class VolumeScanner extends Thread {
           saveBlockIterator(curBlockIter);
         }
       }
+      // 对选定好的块,进行扫描,同时传入带宽速率进行限流
       bytesScanned = scanBlock(block, conf.targetBytesPerSec);
       if (bytesScanned >= 0) {
         scannedBytesSum += bytesScanned;
@@ -588,6 +606,9 @@ public class VolumeScanner extends Thread {
    * If there are elements in the suspectBlocks list, removes
    * and returns the first one.  Otherwise, returns null.
    */
+  /**
+   * 可疑块是从suspectBlocks块列表中移出的，而suspectBlocks是VolumeScanner所维护的可疑块列表
+   * */
   private synchronized ExtendedBlock popNextSuspectBlock() {
     Iterator<ExtendedBlock> iter = suspectBlocks.iterator();
     if (!iter.hasNext()) {
@@ -598,6 +619,12 @@ public class VolumeScanner extends Thread {
     return block;
   }
 
+  /**
+   * run方法处理逻辑:
+   * 1 初始化块处理类;
+   * 2 循环获取下一个可疑检查块;
+   * 3 检测扫描选出的可疑块;
+   * */
   @Override
   public void run() {
     // Record the minute on which the scanner started.
@@ -606,13 +633,15 @@ public class VolumeScanner extends Thread {
     this.curMinute = startMinute;
     try {
       LOG.trace("{}: thread starting.", this);
+      // 初始化处理类ResultHandler
       resultHandler.setup(this);
       try {
         long timeout = 0;
-        while (true) {
+        while (true) { // while循环里面主要是可疑块的筛选和扫描工作
           ExtendedBlock suspectBlock = null;
           // Take the lock to check if we should stop, and access the
           // suspect block list.
+          // 获取当前线程对像锁,以确保操作可疑块列表的同步性
           synchronized (this) {
             if (stopping) {
               break;
@@ -626,6 +655,7 @@ public class VolumeScanner extends Thread {
             }
             suspectBlock = popNextSuspectBlock();
           }
+          // 进行可疑块扫描
           timeout = runLoop(suspectBlock);
         }
       } catch (InterruptedException e) {
@@ -663,7 +693,10 @@ public class VolumeScanner extends Thread {
     this.interrupt();
   }
 
-
+  /**
+   * 标记可疑块
+   * 如果可疑块不存在,则加入suspectBlocks队列
+   * */
   public synchronized void markSuspectBlock(ExtendedBlock block) {
     if (stopping) {
       LOG.debug("{}: Not scheduling suspect block {} for " +
@@ -684,7 +717,7 @@ public class VolumeScanner extends Thread {
     suspectBlocks.add(block);
     recentSuspectBlocks.put(block, true);
     LOG.debug("{}: Scheduling suspect block {} for rescanning.", this, block);
-    notify(); // wake scanner thread.
+    notify(); // wake scanner thread. - 唤醒线程
   }
 
   /**
