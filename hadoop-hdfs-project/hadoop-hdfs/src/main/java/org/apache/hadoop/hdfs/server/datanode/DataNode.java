@@ -1827,6 +1827,8 @@ public class DataNode extends ReconfigurableBase
   
   /**
    * Check if there is a disk failure asynchronously and if so, handle the error
+   * 检查是否存在异步磁盘错误,如果是,则处理它.
+   * 这个方法是DataNode对外提供的磁盘检测方法,因此checkDiskErrorAsync方法有多次调用的场景.
    */
   public void checkDiskErrorAsync() {
     synchronized(checkDiskErrorMutex) {
@@ -3214,6 +3216,7 @@ public class DataNode extends ReconfigurableBase
   /**
    * Starts a new thread which will check for disk error check request 
    * every 5 sec
+   * 启动一个新的线程,该线程每5秒去检查一次磁盘错误
    */
   private void startCheckDiskErrorThread() {
     checkDiskErrorThread = new Thread(new Runnable() {

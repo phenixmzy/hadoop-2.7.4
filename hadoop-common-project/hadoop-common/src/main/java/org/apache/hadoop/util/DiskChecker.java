@@ -31,6 +31,11 @@ import org.apache.hadoop.fs.permission.FsPermission;
 /**
  * Class that provides utility functions for checking disk problem
  */
+/**
+ * 该类提供了检测问题磁盘的工具方法,也就是提供了一个坏盘检测服务.
+ * 检测的基本是每个磁盘,检测的对像是FsVolume,FsVolume对应一个存储数据的磁盘.
+ * 通过检测文件目录的访问权限以及目录是否可以创建来判断所属磁盘的好坏,如果是坏盘,则此块盘将会被移除,盘上的所有块都将被重新复制.
+ * */
 @InterfaceAudience.Private
 @InterfaceStability.Unstable
 public class DiskChecker {
