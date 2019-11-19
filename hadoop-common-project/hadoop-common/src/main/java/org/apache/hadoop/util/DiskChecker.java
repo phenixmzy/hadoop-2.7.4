@@ -69,11 +69,13 @@ public class DiskChecker {
    * @return true on success, false on failure
    */
   public static boolean mkdirsWithExistsCheck(File dir) {
+    // 尝试创建目录并检查是否存在
     if (dir.mkdir() || dir.exists()) {
       return true;
     }
     File canonDir = null;
     try {
+      // 如果失败,则往上一层检测,如果上一层的父目录已经不存在,则直接返回false
       canonDir = dir.getCanonicalFile();
     } catch (IOException e) {
       return false;
@@ -106,10 +108,12 @@ public class DiskChecker {
    * @throws DiskErrorException
    */
   public static void checkDir(File dir) throws DiskErrorException {
+    // 尝试创建目录的检查
     if (!mkdirsWithExistsCheck(dir)) {
       throw new DiskErrorException("Cannot create directory: "
                                    + dir.toString());
     }
+    // 文件目录的访问权限的检查
     checkDirAccess(dir);
   }
 
@@ -189,16 +193,17 @@ public class DiskChecker {
    */
   private static void checkAccessByFileMethods(File dir)
       throws DiskErrorException {
+    // 检查是否可读
     if (!FileUtil.canRead(dir)) {
       throw new DiskErrorException("Directory is not readable: "
                                    + dir.toString());
     }
-
+    // 检查是否可写
     if (!FileUtil.canWrite(dir)) {
       throw new DiskErrorException("Directory is not writable: "
                                    + dir.toString());
     }
-
+    // 检查是否可执行
     if (!FileUtil.canExecute(dir)) {
       throw new DiskErrorException("Directory is not executable: "
                                    + dir.toString());
