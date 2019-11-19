@@ -624,20 +624,23 @@ public class DirectoryScanner implements Runnable {
         FinalizedReplica[] memReport = bl.toArray(new FinalizedReplica[bl.size()]);
         Arrays.sort(memReport); // Sort based on blockId - 对内存中的Block进行排序
   
-        int d = 0; // index for blockpoolReport
-        int m = 0; // index for memReprot
+        int d = 0; // index for blockpoolReport - blockPoolReport对象当前下标
+        int m = 0; // index for memReprot - memReprot下标
         while (m < memReport.length && d < blockpoolReport.length) {
           FinalizedReplica memBlock = memReport[m];
           ScanInfo info = blockpoolReport[d];
+          // 第一种情况,内存中的块丢失,而磁盘中的块还在
           if (info.getBlockId() < memBlock.getBlockId()) {
             if (!dataset.isDeletingBlock(bpid, info.getBlockId())) {
               // Block is missing in memory
+              // 块信息在内存中丢失,进行累加
               statsRecord.missingMemoryBlocks++;
               addDifference(diffRecord, statsRecord, info);
             }
             d++;
             continue;
           }
+          // 第二种情况,磁盘中的块丢失,而内存中的块还在
           if (info.getBlockId() > memBlock.getBlockId()) {
             // Block is missing on the disk
             addDifference(diffRecord, statsRecord,
@@ -649,15 +652,18 @@ public class DirectoryScanner implements Runnable {
           // Block exists in memory
           if (info.getBlockFile() == null) {
             // Block metadata file exits and block file is missing
+            // 第三种情况,block元数据文件存在,而块文件不存在
             addDifference(diffRecord, statsRecord, info);
           } else if (info.getGenStamp() != memBlock.getGenerationStamp()
               || info.getBlockFileLength() != memBlock.getNumBytes()) {
             // Block metadata file is missing or has wrong generation stamp,
             // or block file length is different than expected
+            // 第四种情况,Block元数据文件丢失 or 存在错误的生成时间戳 or Block File 长度与预期的不同
             statsRecord.mismatchBlocks++;
             addDifference(diffRecord, statsRecord, info);
           } else if (info.getBlockFile().compareTo(memBlock.getBlockFile()) != 0) {
             // volumeMap record and on-disk files don't match.
+            // 第五种情况,volumeMap 内存中的记录与 磁盘上的文件不匹配
             statsRecord.duplicateBlocks++;
             addDifference(diffRecord, statsRecord, info);
           }
@@ -666,6 +672,7 @@ public class DirectoryScanner implements Runnable {
           if (d < blockpoolReport.length) {
             // There may be multiple on-disk records for the same block, don't increment
             // the memory record pointer if so.
+            // 对于同一块,在多个磁盘上可能会存在记录信息,此处无须增加内存的下标
             ScanInfo nextInfo = blockpoolReport[Math.min(d, blockpoolReport.length - 1)];
             if (nextInfo.getBlockId() != info.blockId) {
               ++m;
