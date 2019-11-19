@@ -1918,6 +1918,7 @@ class FsDatasetImpl implements FsDatasetSpi<FsVolumeImpl> {
         return f;
    
       // if file is not null, but doesn't exist - possibly disk failed
+      // 文件存在,但是实际上文件不存在(f.exists() == false),可能磁盘坏了
       datanode.checkDiskErrorAsync();
     }
     

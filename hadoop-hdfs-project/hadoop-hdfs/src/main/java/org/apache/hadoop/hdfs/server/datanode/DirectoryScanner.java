@@ -55,6 +55,7 @@ import org.apache.hadoop.util.Time;
 /**
  * Periodically scans the data directories for block and block metadata files.
  * Reconciles the differences with block information maintained in the dataset.
+ * 阶段性扫描数据存储目录上的块文件以及块元数据信息文件,使其数据与DataNode内存中所维护的数据趋向一致.
  */
 /**
  * DirectoryScanner的主要任务是定期扫描磁盘上的数据块、元数据文件,检查磁盘数据块、元数据文件是否 与 数据集(FsDataImpl)
@@ -481,6 +482,7 @@ public class DirectoryScanner implements Runnable {
     }
 
     LOG.info(logMsg);
+    // DirectoryScanner线程加入线程池定性执行数据同步
     masterThread.scheduleAtFixedRate(this, offset, scanPeriodMsecs, 
                                      TimeUnit.MILLISECONDS);
   }
@@ -517,6 +519,7 @@ public class DirectoryScanner implements Runnable {
       }
 
       //We're are okay to run - do it
+      // 执行数据同步操作
       reconcile();      
       
     } catch (Exception e) {
@@ -569,15 +572,23 @@ public class DirectoryScanner implements Runnable {
 
   /**
    * Reconcile differences between disk and in-memory blocks
+   * 同步内存与磁盘的数据块信息.
+   * 1 收集本地磁盘上与内存中数据块信息,并获取它们之间的差异列表
+   * 2 遍历diff信息列表,进行相对应的数据更新操作
+   *
    */
   @VisibleForTesting
   void reconcile() throws IOException {
-    scan(); //收集磁盘上与内存中数据块的差异信息
+    // 收集本地磁盘上与内存中数据块信息,并获取它们之间的差异列表
+    scan();
+
+    // 遍历diff信息列表
     for (Entry<String, LinkedList<ScanInfo>> entry : diffs.entrySet()) {
       String bpid = entry.getKey();
       LinkedList<ScanInfo> diff = entry.getValue();
       
       for (ScanInfo info : diff) {
+        // 进行相对应的数据更新操作
         dataset.checkAndUpdate(bpid, info.getBlockId(), info.getBlockFile(),
             info.getMetaFile(), info.getVolume());
       }
@@ -588,12 +599,15 @@ public class DirectoryScanner implements Runnable {
   /**
    * Scan for the differences between disk and in-memory blocks
    * Scan only the "finalized blocks" lists of both disk and memory.
+   * 扫描disk与内存之间的存在差异的block.并且仅仅扫描finalized状态的blocks.
    */
   private void scan() {
     clear();
     Map<String, ScanInfo[]> diskReport = getDiskReport();
 
     // Hold FSDataset lock to prevent further changes to the block map
+    // 获的FSDataset锁,以防止block map的变更,保证block map的同步操作.
+    // 因为需要比较磁盘Block和内存的处于Finalized状态的Block信息,而内存Block信息是保存在FsDatasetImpl.volumeMap变量里面.
     synchronized(dataset) {
       for (Entry<String, ScanInfo[]> entry : diskReport.entrySet()) {
         String bpid = entry.getKey();
@@ -602,12 +616,13 @@ public class DirectoryScanner implements Runnable {
         Stats statsRecord = new Stats(bpid);
         stats.put(bpid, statsRecord);
         LinkedList<ScanInfo> diffRecord = new LinkedList<ScanInfo>();
-        diffs.put(bpid, diffRecord);
+        diffs.put(bpid, diffRecord); // 初始化BlockPoolId对应的 差异化Scan Block Information列表
         
         statsRecord.totalBlocks = blockpoolReport.length;
+        // 获取内存中Block报告信息, b1列表
         List<FinalizedReplica> bl = dataset.getFinalizedBlocks(bpid);
         FinalizedReplica[] memReport = bl.toArray(new FinalizedReplica[bl.size()]);
-        Arrays.sort(memReport); // Sort based on blockId
+        Arrays.sort(memReport); // Sort based on blockId - 对内存中的Block进行排序
   
         int d = 0; // index for blockpoolReport
         int m = 0; // index for memReprot

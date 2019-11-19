@@ -228,25 +228,35 @@ class FsVolumeList {
    *
    * @return list of all the failed volumes.
    */
+  /**
+   * 该方法实现了HDFS磁盘检测的原理.
+   * */
   Set<File> checkDirs() {
     synchronized(checkDirsMutex) {
       Set<File> failedVols = null;
       
-      // Make a copy of volumes for performing modification 
+      // Make a copy of volumes for performing modification
+      // 获取当前对应的volume, volume对应的是存储此volume的盘
       final List<FsVolumeImpl> volumeList = getVolumes();
 
+      // 遍历每个volume,并获取每个volume对应的FsVolumeImpl,然后通过FsVolumeImpl 获取对应的FsVolumeReference,
+      // 调用FsVolumeReference.checkDirs 方法进行检测.
+      // 而 每个 FsVolumeReference.checkDirs()的内部实现是调用 BlockPoolSlice.checkDirs
+      // 最后在BlockPoolSlice.checkDirs 方法中调用 DiskChecker.checkDir方法对三个目录(finalized,tmp,rbw)进行检测.
+      // 总结调用流程: FsVolumeReference.checkDirs -> BlockPoolSlice.checkDirs -> BlockPoolSlice.checkDirs
       for(Iterator<FsVolumeImpl> i = volumeList.iterator(); i.hasNext(); ) {
         final FsVolumeImpl fsv = i.next();
         try (FsVolumeReference ref = fsv.obtainReference()) {
           fsv.checkDirs();
         } catch (DiskErrorException e) {
+          // 检测期间出现DiskError异常,则此块将被移入坏盘中,然后DataNode中将此块坏盘移除,这块坏盘将不会写入新数据.
           FsDatasetImpl.LOG.warn("Removing failed volume " + fsv + ": ", e);
           if (failedVols == null) {
             failedVols = new HashSet<>(1);
           }
           failedVols.add(new File(fsv.getBasePath()).getAbsoluteFile());
           addVolumeFailureInfo(fsv);
-          removeVolume(fsv);
+          removeVolume(fsv); // DataNode中将此块坏盘移除,这块坏盘将不会写入新数据.
         } catch (ClosedChannelException e) {
           FsDatasetImpl.LOG.debug("Caught exception when obtaining " +
             "reference count on closed volume", e);
