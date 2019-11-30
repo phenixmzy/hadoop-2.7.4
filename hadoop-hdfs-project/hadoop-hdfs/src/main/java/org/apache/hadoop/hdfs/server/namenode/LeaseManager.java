@@ -464,6 +464,9 @@ public class LeaseManager {
   /** Check the leases beginning from the oldest.
    *  @return true is sync is needed.
    */
+  /**
+   * 从最早的开始检查租约
+   * */
   @VisibleForTesting
   synchronized boolean checkLeases() {
     boolean needSync = false;
@@ -485,12 +488,22 @@ public class LeaseManager {
       // internalReleaseLease() removes paths corresponding to empty files,
       // i.e. it needs to modify the collection being iterated over
       // causing ConcurrentModificationException
+      // 遍历超时租约中所有文件,对每一个文件进行租约恢复
       String[] leasePaths = new String[leaseToCheck.getPaths().size()];
       leaseToCheck.getPaths().toArray(leasePaths);
       for(String p : leasePaths) {
         try {
           INodesInPath iip = fsnamesystem.getFSDirectory().getINodesInPath(p,
               true);
+          // 调用FsNamesytem.internalReleaseLease对文件进行租约恢复
+            /**
+             * fsnamesystem.internalReleaseLease
+             * 对于HDFS文件的租约恢复操作是用过该方法实现的,这个方法用于将一个已经打开的文件进行租约恢复并关闭.
+             * 如果成功关闭了文件,该方法返回true;
+             * 如果仅触发了租约恢复操作,则返回false;
+             * 租约恢复是针对已经打开的构建中的文集,所以该方法会判断文件中所有数据块的状态,对于异常的状态直接抛出异常.
+             * 该方法会被LeaseManager.checkLeases方法调用.
+             * */
           boolean completed = fsnamesystem.internalReleaseLease(leaseToCheck, p,
               iip, HdfsServerConstants.NAMENODE_LEASE_HOLDER);
           if (LOG.isDebugEnabled()) {
@@ -501,16 +514,18 @@ public class LeaseManager {
             }
           }
           // If a lease recovery happened, we need to sync later.
+          // 由于进行了恢复操作,需要在editlog中不同记录
           if (!needSync && !completed) {
             needSync = true;
           }
         } catch (IOException e) {
           LOG.error("Cannot release the path " + p + " in the lease "
               + leaseToCheck, e);
+          // 租约恢复出现异常,则加入removeing队列中
           removing.add(p);
         }
       }
-
+      // 对于调用 internalReleaseLease 方法是抛出异常的租约(租约恢复异常),这直接删除调用removeLease方法删除
       for(String p : removing) {
         removeLease(leaseToCheck, p);
       }

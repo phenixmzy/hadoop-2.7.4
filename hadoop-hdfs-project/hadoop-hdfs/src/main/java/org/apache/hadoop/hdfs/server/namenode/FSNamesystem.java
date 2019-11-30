@@ -3397,14 +3397,14 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     INode inode = iip.getLastINode();
     assert hasReadLock();
     final String ident = src + " (inode " + fileId + ")";
-    if (inode == null) {
+    if (inode == null) { // HDFS文件不存在,则抛出异常
       Lease lease = leaseManager.getLease(holder);
       throw new LeaseExpiredException(
           "No lease on " + ident + ": File does not exist. "
           + (lease != null ? lease.toString()
               : "Holder " + holder + " does not have any open files."));
     }
-    if (!inode.isFile()) {
+    if (!inode.isFile()) { // INode是一个目录, 则抛出异常
       Lease lease = leaseManager.getLease(holder);
       throw new LeaseExpiredException(
           "No lease on " + ident + ": INode is not a regular file. "
@@ -3412,7 +3412,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
               : "Holder " + holder + " does not have any open files."));
     }
     final INodeFile file = inode.asFile();
-    if (!file.isUnderConstruction()) {
+    if (!file.isUnderConstruction()) { // 文件不处于构建状中状态, 则抛出异常
       Lease lease = leaseManager.getLease(holder);
       throw new LeaseExpiredException(
           "No lease on " + ident + ": File is not open for writing. "
@@ -3422,11 +3422,11 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     // No further modification is allowed on a deleted file.
     // A file is considered deleted, if it is not in the inodeMap or is marked
     // as deleted in the snapshot feature.
-    if (isFileDeleted(file)) {
+    if (isFileDeleted(file)) { // 文件已经被删除,则抛出异常
       throw new FileNotFoundException(src);
     }
     String clientName = file.getFileUnderConstructionFeature().getClientName();
-    if (holder != null && !clientName.equals(holder)) {
+    if (holder != null && !clientName.equals(holder)) { // 租约信息与LeaseManager记录的不匹配m,则抛出异常
       throw new LeaseExpiredException("Lease mismatch on " + ident +
           " owned by " + clientName + " but is accessed by " + holder);
     }
@@ -3976,6 +3976,13 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
    *         false if block recovery has been initiated. Since the lease owner
    *         has been changed and logged, caller should call logSync().
    */
+  /**
+   * 对于HDFS文件的租约恢复操作是用过该方法实现的,这个方法用于将一个已经打开的文件进行租约恢复并关闭.
+   * 如果成功关闭了文件,该方法返回true;
+   * 如果仅触发了租约恢复操作,则返回false;
+   * 租约恢复是针对已经打开的构建中的文集,所以该方法会判断文件中所有数据块的状态,对于异常的状态直接抛出异常.
+   * 该方法会被LeaseManager.checkLeases方法调用.
+   * */
   boolean internalReleaseLease(Lease lease, String src, INodesInPath iip,
       String recoveryLeaseHolder) throws IOException {
     LOG.info("Recovering " + lease + ", src=" + src);
@@ -3983,10 +3990,10 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
     assert hasWriteLock();
 
     final INodeFile pendingFile = iip.getLastINode().asFile();
-    int nrBlocks = pendingFile.numBlocks();
+    int nrBlocks = pendingFile.numBlocks(); // 文件拥有的数据块数量
     BlockInfoContiguous[] blocks = pendingFile.getBlocks();
 
-    int nrCompleteBlocks;
+    int nrCompleteBlocks; // 文件拥有的数据块处于COMPLETE状态的数量
     BlockInfoContiguous curBlock = null;
     for(nrCompleteBlocks = 0; nrCompleteBlocks < nrBlocks; nrCompleteBlocks++) {
       curBlock = blocks[nrCompleteBlocks];
@@ -3998,6 +4005,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
 
     // If there are no incomplete blocks associated with this file,
     // then reap lease immediately and close the file.
+    // 如果文件拥有的所有数据块都处于COMPLETE状态,则可以直接关闭文件,释放租约
     if(nrCompleteBlocks == nrBlocks) {
       finalizeINodeFileUnderConstruction(src, pendingFile,
           iip.getLatestSnapshotId());
@@ -4009,6 +4017,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
 
     // Only the last and the penultimate blocks may be in non COMPLETE state.
     // If the penultimate block is not COMPLETE, then it must be COMMITTED.
+    // 在文件的所有数据块中,只有最后一个数据块以及倒数第二个数据块的状态可以不为COMPLETE,且状态只能是COMPLETED
     if(nrCompleteBlocks < nrBlocks - 2 ||
        nrCompleteBlocks == nrBlocks - 2 &&
          curBlock != null &&
@@ -4017,6 +4026,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         + "attempt to release a create lock on "
         + src + " but file is already closed.";
       NameNode.stateChangeLog.warn(message);
+      // 如果最后一个数据块既不处于COMPLETED状态,也不处于COMPLETE状态,则抛出异常
       throw new IOException(message);
     }
 
@@ -4032,10 +4042,12 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
 
     switch(lastBlockState) {
     case COMPLETE:
+      // 不可能发送这种情况
       assert false : "Already checked that the last block is incomplete";
       break;
     case COMMITTED:
       // Close file if committed blocks are minimally replicated
+      // 如果最后一个数据块处于COMPLETED状态,且数据块副本数量大于1则关闭文件,释放租约
       if(penultimateBlockMinReplication &&
           blockManager.checkMinReplication(lastBlock)) {
         finalizeINodeFileUnderConstruction(src, pendingFile,
@@ -4054,9 +4066,10 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
           ". Committed blocks are waiting to be minimally replicated." +
           " Try again later.";
       NameNode.stateChangeLog.warn(message);
+      // 由于最后一个数据块的副本数量不足,需要等待复制操作,则抛出异常
       throw new AlreadyBeingCreatedException(message);
-    case UNDER_CONSTRUCTION:
-    case UNDER_RECOVERY:
+    case UNDER_CONSTRUCTION: // 状态处于-正在构建中
+    case UNDER_RECOVERY: // 状态处于-正在恢复中
       final BlockInfoContiguousUnderConstruction uc = (BlockInfoContiguousUnderConstruction)lastBlock;
       // determine if last block was intended to be truncated
       Block recoveryBlock = uc.getTruncateBlock();
@@ -4073,7 +4086,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       if (uc.getNumExpectedLocations() == 0) {
         uc.setExpectedLocations(blockManager.getStorages(lastBlock));
       }
-
+      // 如果最后一个数据块未写入任何数据,这删除这个数据块,关闭文件
       if (uc.getNumExpectedLocations() == 0 && uc.getNumBytes() == 0) {
         // There is no datanode reported to this block.
         // may be client have crashed before writing data to pipeline.
@@ -4087,6 +4100,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         return true;
       }
       // start recovery of the last block for this file
+      // 如果最后一个数据块写入了数据,则调用initializeBlockRecovery触发租约恢复
       long blockRecoveryId = nextGenerationStamp(blockIdManager.isLegacyBlock(uc));
       lease = reassignLease(lease, src, recoveryLeaseHolder, pendingFile);
       if(copyOnTruncate) {
@@ -4094,7 +4108,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
       } else if(truncateRecovery) {
         recoveryBlock.setGenerationStamp(blockRecoveryId);
       }
-      uc.initializeBlockRecovery(blockRecoveryId);
+      uc.initializeBlockRecovery(blockRecoveryId); // 如果最后一个数据块写入了数据,则调用initializeBlockRecovery触发租约恢复
       leaseManager.renewLease(lease);
       // Cannot close file right now, since the last block requires recovery.
       // This may potentially cause infinite loop in lease recovery
@@ -4104,6 +4118,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
                 "File " + src + " has not been closed." +
                " Lease recovery is in progress. " +
                 "RecoveryId = " + blockRecoveryId + " for block " + lastBlock);
+      // 租约恢复时不可以关闭文件,需要等待租约恢复操作结束
       break;
     }
     return false;
@@ -4278,22 +4293,31 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
                               + " does not match current recovery id "
                               + recoveryId + " for block " + oldBlock);
       }
+      // 检查是否拥有命名空间的写权限
+      // 检查是否处于安全模式
+      // 检查提交的数据块是否存在,如果不存在则抛出异常
+      // 检查数据块对应的HDFS文件是否已经存在,如果不存在则抛出异常
+      // 检查这个HDFS文件是否已经被删除,如果删除了则抛出异常
+      // 如果问价内部处于构建中状态,或者最好一个数据块已经提交,则抛出异常
+      // 检查recovery是否和当前Namenode记录的recoveryId一致,不一致则抛出异常
 
-      if (deleteblock) {
+      if (deleteblock) { // 如果设置了删除删除,则从INode以及blockManager中删除数据块
         Block blockToDel = ExtendedBlock.getLocalBlock(oldBlock);
         boolean remove = iFile.removeLastBlock(blockToDel);
         if (remove) {
           blockManager.removeBlock(storedBlock);
         }
       }
-      else {
+      else { // 否则为更新数据的情况
         // update last block
+        // 将Namenode记录的数据块长度和时间戳与租约恢复后数据节点上的副本同步
         if(!copyTruncate) {
           storedBlock.setGenerationStamp(newgenerationstamp);
           storedBlock.setNumBytes(newlength);
         }
 
         // find the DatanodeDescriptor objects
+        // 查找出来租约恢复后存储当前数据块副本的DataNodeDescriptor以及DataNodeStorageInfo对象
         ArrayList<DatanodeDescriptor> trimmedTargets =
             new ArrayList<DatanodeDescriptor>(newtargets.length);
         ArrayList<String> trimmedStorages =
@@ -4315,6 +4339,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
           // the file is getting closed. Insert block locations into blockManager.
           // Otherwise fsck will report these blocks as MISSING, especially if the
           // blocksReceived from Datanodes take a long time to arrive.
+          // 将副本信息添加到DatanodeStorageInfo中保存
           for (int i = 0; i < trimmedTargets.size(); i++) {
             DatanodeStorageInfo storageInfo =
                 trimmedTargets.get(i).getStorageInfo(trimmedStorages.get(i));
@@ -4329,6 +4354,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         }
 
         // add pipeline locations into the INodeUnderConstruction
+        // 在INode中记录保存最后一个数据块的数据节点存储的信息
         DatanodeStorageInfo[] trimmedStorageInfos =
             blockManager.getDatanodeManager().getDatanodeStorageInfos(
                 trimmedTargets.toArray(new DatanodeID[trimmedTargets.size()]),
@@ -4347,7 +4373,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         }
       }
 
-      if (closeFile) {
+      if (closeFile) { // 调用closeFileCommitBlocks方法关闭文件
         if(copyTruncate) {
           closeFileCommitBlocks(src, iFile, truncatedBlock);
           if(!iFile.isBlockInLatestSnapshot(storedBlock)) {
@@ -4358,6 +4384,7 @@ public class FSNamesystem implements Namesystem, FSNamesystemMBean,
         }
       } else {
         // If this commit does not want to close the file, persist blocks
+        // 如果不关闭文件,则 editLog中记录
         persistBlocks(src, iFile, false);
       }
     } finally {

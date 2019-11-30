@@ -2598,6 +2598,9 @@ public class DataNode extends ReconfigurableBase
    * Convenience method, which unwraps RemoteException.
    * @throws IOException not a RemoteException.
    */
+  /**
+   * 工具方法,其封装了RemoteException
+   * */
   private static ReplicaRecoveryInfo callInitReplicaRecovery(
       InterDatanodeProtocol datanode,
       RecoveringBlock rBlock) throws IOException {

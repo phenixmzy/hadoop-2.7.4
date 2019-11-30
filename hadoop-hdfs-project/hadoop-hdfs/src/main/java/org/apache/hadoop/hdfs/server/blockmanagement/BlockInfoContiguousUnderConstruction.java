@@ -286,8 +286,15 @@ public class BlockInfoContiguousUnderConstruction extends BlockInfoContiguous {
    * Find the first alive data-node starting from the previous primary and
    * make it primary.
    */
+  /**
+   * 租约恢复过程.
+   * 该方法会遍历所有保存副本的数据节点,选取一个最近一次进行汇报的数据节点作为主恢复节点,
+   * 然后向这个数据节点发送恢复租约指令,Namenode会通过心跳将租约恢复的名字节点指令下发给该恢复节点.
+   * */
   public void initializeBlockRecovery(long recoveryId) {
+    // 将数据块状态更改为 UNDER_RECOVERY
     setBlockUCState(BlockUCState.UNDER_RECOVERY);
+    // 数据块恢复时间戳
     blockRecoveryId = recoveryId;
     if (replicas.size() == 0) {
       NameNode.blockStateChangeLog.warn("BLOCK*"
@@ -308,6 +315,7 @@ public class BlockInfoContiguousUnderConstruction extends BlockInfoContiguous {
         replicas.get(i).setChosenAsPrimary(false);
       }
     }
+    // 遍历所有副本所在的DataNode,选取最近一次进行汇报的DataNode作为主恢复节点
     long mostRecentLastUpdate = 0;
     ReplicaUnderConstruction primary = null;
     primaryNodeIndex = -1;
@@ -326,6 +334,7 @@ public class BlockInfoContiguousUnderConstruction extends BlockInfoContiguous {
       }
     }
     if (primary != null) {
+      // 向主恢复节点发送数据块恢复指令
       primary.getExpectedStorageLocation().getDatanodeDescriptor().addBlockToBeRecovered(this);
       primary.setChosenAsPrimary(true);
       NameNode.blockStateChangeLog.info(
