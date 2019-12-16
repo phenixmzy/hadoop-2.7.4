@@ -91,6 +91,11 @@ public class DatanodeManager {
   private final NetworkTopology networktopology;
 
   /** Host names to datanode descriptors mapping. */
+  /**
+   * 这里host -> datanode descriptors 映射,而不是host -> datanode是因为Datanode的storageId是有可能发生变化的,
+   * 一般情况下这两个映射关系是一致的,但是可能会出现Datanode重新启动后使用一个新的storageId注册的情况,这时候就需要对
+   * datanodeMap字段进行更新.
+   * */
   private final Host2NodesMap host2DatanodeMap = new Host2NodesMap();
 
   private final DNSToSwitchMapping dnsToSwitchMapping;
@@ -591,6 +596,9 @@ public class DatanodeManager {
   }
 
   /** Is the datanode dead? */
+  /**
+   * 如果发现Datanode在timeout的时间内还未上报心跳,则认为Datanode发生故障
+   * */
   boolean isDatanodeDead(DatanodeDescriptor node) {
     return (node.getLastUpdateMonotonic() <
             (monotonicNow() - heartbeatExpireInterval));
@@ -860,33 +868,44 @@ public class DatanodeManager {
       nodeReg.setExportedKeys(blockManager.getBlockKeys());
   
       // Checks if the node is not on the hosts list.  If it is not, then
-      // it will be disallowed from registering. 
+      // it will be disallowed from registering.
+      // 检查node是否存在于include文件中,如果不存在include文件,则不允许注册
       if (!hostFileManager.isIncluded(nodeReg)) {
         throw new DisallowedDatanodeException(nodeReg);
       }
         
       NameNode.stateChangeLog.info("BLOCK* registerDatanode: from "
           + nodeReg + " storage " + nodeReg.getDatanodeUuid());
-  
+
+      // nodeS:表明从DatanodeManager.datanodeMap字段中通过datanodeUuid获取的DatanodeDescriptor对象
       DatanodeDescriptor nodeS = getDatanode(nodeReg.getDatanodeUuid());
+
+      // nodeN:表明从DatanodeManager.host2DatanodeMap字段中通过ipAddr和port获取的DatanodeDescriptor对象
       DatanodeDescriptor nodeN = host2DatanodeMap.getDatanodeByXferAddr(
           nodeReg.getIpAddr(), nodeReg.getXferPort());
-        
+
+      // 第二种情况: 已经注册过的Datanode使用新的datanodeUuid注册.
       if (nodeN != null && nodeN != nodeS) {
         NameNode.LOG.info("BLOCK* registerDatanode: " + nodeN);
         // nodeN previously served a different data storage, 
         // which is not served by anybody anymore.
+        // nodeN是之前保留的数据块存储,需要清理Namenode中的这个Datanode的信息,
+        // 包含heartbeatManager,blockManager,networktopology这三个映射的信息
         removeDatanode(nodeN);
+
         // physically remove node from datanodeMap
+        // 从datanodeMap以及host2DatanodeMap,以及BlockManager.invalidateBlocks中删除
         wipeDatanode(nodeN);
         nodeN = null;
       }
-  
+
+      // 第三种情况:该DataNode注册过,这次是重复注册.只需刷新注册的信息更新Namenode内存中保存的Datanode原有信息即可.
       if (nodeS != null) {
         if (nodeN == nodeS) {
           // The same datanode has been just restarted to serve the same data 
           // storage. We do not need to remove old data blocks, the delta will
           // be calculated on the next block report from the datanode
+          // 同一个Datanode刚刚重新启动服务于相同的数据存储,不需要删除旧的数据块,会在下次block report做增量计算
           if(NameNode.stateChangeLog.isDebugEnabled()) {
             NameNode.stateChangeLog.debug("BLOCK* registerDatanode: "
                 + "node restarted.");
@@ -905,10 +924,11 @@ public class DatanodeManager {
               + " is replaced by " + nodeReg + " with the same storageID "
               + nodeReg.getDatanodeUuid());
         }
-        
+        // 刷新注册的信息更新Namenode内存中保存的Datanode原有信息.
         boolean success = false;
         try {
           // update cluster map
+          // 更新网络拓扑、节点等信息
           getNetworkTopology().remove(nodeS);
           if(shouldCountVersion(nodeS)) {
             decrementVersionCount(nodeS.getSoftwareVersion());
@@ -931,6 +951,7 @@ public class DatanodeManager {
           getNetworkTopology().add(nodeS);
             
           // also treat the registration message as a heartbeat
+          // 以注册消息作为心跳
           heartbeatManager.register(nodeS);
           incrementVersionCount(nodeS.getSoftwareVersion());
           startDecommissioningIfExcluded(nodeS);
@@ -945,11 +966,12 @@ public class DatanodeManager {
         return;
       }
 
+      // 第一种情况:首次注册
       DatanodeDescriptor nodeDescr 
         = new DatanodeDescriptor(nodeReg, NetworkTopology.DEFAULT_RACK);
       boolean success = false;
       try {
-        // resolve network location
+        // resolve network location - 更新网络拓扑
         if(this.rejectUnresolvedTopologyDN) {
           nodeDescr.setNetworkLocation(resolveNetworkLocation(nodeDescr));
           nodeDescr.setDependentHostNames(getNetworkDependencies(nodeDescr));
@@ -963,10 +985,12 @@ public class DatanodeManager {
         nodeDescr.setSoftwareVersion(nodeReg.getSoftwareVersion());
   
         // register new datanode
+        // 注册新节点,添加到datanodeMap和host2DatanodeMap中
         addDatanode(nodeDescr);
         // also treat the registration message as a heartbeat
         // no need to update its timestamp
         // because its is done when the descriptor is created
+        // 在heartbeatManager中添加该数据节点
         heartbeatManager.addDatanode(nodeDescr);
         incrementVersionCount(nodeReg.getSoftwareVersion());
         startDecommissioningIfExcluded(nodeDescr);
@@ -998,10 +1022,10 @@ public class DatanodeManager {
    * checks if any of the hosts have changed states:
    */
   public void refreshNodes(final Configuration conf) throws IOException {
-    refreshHostsReader(conf);
+    refreshHostsReader(conf); // 加载include文件与exclude文件至hostFileManager
     namesystem.writeLock();
     try {
-      refreshDatanodes();
+      refreshDatanodes(); // 刷新所有的数据节点
       countSoftwareVersions();
     } finally {
       namesystem.writeUnlock();
@@ -1015,6 +1039,7 @@ public class DatanodeManager {
     if (conf == null) {
       conf = new HdfsConfiguration();
     }
+    // 把更新的include和exclude文件加载至hostFileManager对象中保存
     this.hostFileManager.refresh(conf.get(DFSConfigKeys.DFS_HOSTS, ""),
       conf.get(DFSConfigKeys.DFS_HOSTS_EXCLUDE, ""));
   }
@@ -1028,13 +1053,15 @@ public class DatanodeManager {
   private void refreshDatanodes() {
     for(DatanodeDescriptor node : datanodeMap.values()) {
       // Check if not include.
-      if (!hostFileManager.isIncluded(node)) {
+      if (!hostFileManager.isIncluded(node)) { // 不在include文件中
+        // 直接设置为已撤销状态,DatanodeDescriptor.isAllowed=false
+        // 不会拷贝Datanode上的数据块,所以在撤销节点时,先在exclude文件中添加,撤销结束后再从include文件中删除
         node.setDisallowed(true); // case 2.
       } else {
         if (hostFileManager.isExcluded(node)) {
-          decomManager.startDecommission(node); // case 3.
+          decomManager.startDecommission(node); // case 3. 按照对应表,node同时存在在include、exclude两文件中,开始撤销状态
         } else {
-          decomManager.stopDecommission(node); // case 4.
+          decomManager.stopDecommission(node); // case 4. 按照对应表,node存在include、但不存在exclude文件中,停止撤销状态
         }
       }
     }
@@ -1333,29 +1360,49 @@ public class DatanodeManager {
         } catch(UnregisteredNodeException e) {
           return new DatanodeCommand[]{RegisterCommand.REGISTER};
         }
-        
-        // Check if this datanode should actually be shutdown instead. 
+        /**
+         * PART-1
+         * 对发送心跳的数据节点进行检查:
+         * 检查该数据节点能否连接Namenode,如果不能连接则抛出异常;
+         * 检查该数据节点是否在Namenode上注册过,Datanode接收到指令会重新向Namenode发起注册请求;
+
+        // Check if this datanode should actually be shutdown instead.
+        // 检查当前Datanode能否连接到Namenode
         if (nodeinfo != null && nodeinfo.isDisallowed()) {
           setDatanodeDead(nodeinfo);
           throw new DisallowedDatanodeException(nodeinfo);
         }
-
+        // 确认当前Datanode已经在Namenode上注册,否则发送注册指令.RegisterCommand.REGISTER
         if (nodeinfo == null || !nodeinfo.isRegistered()) {
           return new DatanodeCommand[]{RegisterCommand.REGISTER};
         }
 
+        /**
+         * PART-2
+         * Namenode从Datanode的心跳中取出负载信息,调用HeartbeatManager.updateHeartbeat方法更新整个集群的负载信息,
+         * 同时也更新了节点的心跳事件.
+         * */
         heartbeatManager.updateHeartbeat(nodeinfo, reports,
                                          cacheCapacity, cacheUsed,
                                          xceiverCount, failedVolumes,
                                          volumeFailureSummary);
 
+        /**
+         * PART-3
+         * Namenode为Datanode生成Namenode指令:
+         * 如果当前Namenode还处于安全模式,则返回空指令;
+         * 否则依次生成(Data Block恢复指令, Data Block复制指令, Data Block删除指令, 缓存相关指令, balancer带宽指令);
+         * 最后将指令返回给Datanode.
+         * */
         // If we are in safemode, do not send back any recovery / replication
         // requests. Don't even drain the existing queue of work.
+        // 当前Namenode处于安全模式,返回空指令
         if(namesystem.isInSafeMode()) {
           return new DatanodeCommand[0];
         }
 
         //check lease recovery
+        // 生成数据块恢复指令
         BlockInfoContiguousUnderConstruction[] blocks = nodeinfo
             .getLeaseRecoveryCommand(Integer.MAX_VALUE);
         if (blocks != null) {
@@ -1364,6 +1411,7 @@ public class DatanodeManager {
           for (BlockInfoContiguousUnderConstruction b : blocks) {
             final DatanodeStorageInfo[] storages = b.getExpectedStorageLocations();
             // Skip stale nodes during recovery - not heart beated for some time (30s by default).
+            // 忽略所有的stale状态的Datanode
             final List<DatanodeStorageInfo> recoveryLocations =
                 new ArrayList<DatanodeStorageInfo>(storages.length);
             for (int i = 0; i < storages.length; i++) {
@@ -1382,14 +1430,14 @@ public class DatanodeManager {
             // If we only get 1 replica after eliminating stale nodes, then choose all
             // replicas for recovery and let the primary data node handle failures.
             DatanodeInfo[] recoveryInfos;
-            if (recoveryLocations.size() > 1) {
+            if (recoveryLocations.size() > 1) { // 筛选后有足够的数据节点,那么在筛选后的节点上做恢复操作
               if (recoveryLocations.size() != storages.length) {
                 LOG.info("Skipped stale nodes for recovery : " +
                     (storages.length - recoveryLocations.size()));
               }
               recoveryInfos =
                   DatanodeStorageInfo.toDatanodeInfos(recoveryLocations);
-            } else {
+            } else { // 筛选后没有足够的数据节点,那么在原有的节点上做恢复操作
               // If too many replicas are stale, then choose all replicas to participate
               // in block recovery.
               recoveryInfos = DatanodeStorageInfo.toDatanodeInfos(storages);
@@ -1409,6 +1457,7 @@ public class DatanodeManager {
 
         final List<DatanodeCommand> cmds = new ArrayList<DatanodeCommand>();
         //check pending replication
+        // 生成复制指令
         List<BlockTargetPair> pendingList = nodeinfo.getReplicationCommand(
               maxTransfers);
         if (pendingList != null) {
@@ -1416,11 +1465,13 @@ public class DatanodeManager {
               pendingList));
         }
         //check block invalidation
+        // 生成删除指令
         Block[] blks = nodeinfo.getInvalidateBlocks(blockInvalidateLimit);
         if (blks != null) {
           cmds.add(new BlockCommand(DatanodeProtocol.DNA_INVALIDATE,
               blockPoolId, blks));
         }
+        // 生成缓存指令
         boolean sendingCachingCommands = false;
         long nowMs = monotonicNow();
         if (shouldSendCachingCommands && 
@@ -1433,6 +1484,7 @@ public class DatanodeManager {
             cmds.add(pendingCacheCommand);
             sendingCachingCommands = true;
           }
+          // 从缓存中删除数据块
           DatanodeCommand pendingUncacheCommand =
               getCacheCommand(nodeinfo.getPendingUncached(), nodeinfo,
                 DatanodeProtocol.DNA_UNCACHE, blockPoolId);
@@ -1448,12 +1500,14 @@ public class DatanodeManager {
         blockManager.addKeyUpdateCommand(cmds, nodeinfo);
 
         // check for balancer bandwidth update
+        // 生成带宽指令
         if (nodeinfo.getBalancerBandwidth() > 0) {
           cmds.add(new BalancerBandwidthCommand(nodeinfo.getBalancerBandwidth()));
           // set back to 0 to indicate that datanode has been sent the new value
           nodeinfo.setBalancerBandwidth(0);
         }
 
+        // 返回所有指令
         if (!cmds.isEmpty()) {
           return cmds.toArray(new DatanodeCommand[cmds.size()]);
         }

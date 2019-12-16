@@ -31,6 +31,10 @@ import org.apache.hadoop.hdfs.server.namenode.NameNode;
  * Represents a block that is currently being constructed.<br>
  * This is usually the last block of a file opened for write or append.
  */
+/**
+ * 该类代表一个Block正处于构建中.
+ * 这通常是一个文件写入或append最后的一个block.
+ * */
 public class BlockInfoContiguousUnderConstruction extends BlockInfoContiguous {
   /** Block state. See {@link BlockUCState} */
   private BlockUCState blockUCState;
@@ -39,6 +43,9 @@ public class BlockInfoContiguousUnderConstruction extends BlockInfoContiguous {
    * Block replicas as assigned when the block was allocated.
    * This defines the pipeline order.
    */
+  /**
+   * 分配块时分配的块副本.这定义了pipeline的顺序.
+   * */
   private List<ReplicaUnderConstruction> replicas;
 
   /**

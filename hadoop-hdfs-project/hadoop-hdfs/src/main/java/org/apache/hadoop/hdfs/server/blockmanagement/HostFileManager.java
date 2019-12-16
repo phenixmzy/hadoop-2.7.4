@@ -161,6 +161,9 @@ class HostFileManager {
    * we define a partial order between A and B, A <= B iff A.getPort() == B
    * .getPort() || B.getPort() == 0.
    */
+  /**
+   * HostSet允许对匹配的通配符地址进行有效查询。
+   * */
   static class HostSet implements Iterable<InetSocketAddress> {
     // Host -> lists of ports
     private final Multimap<InetAddress, Integer> addrs = HashMultimap.create();

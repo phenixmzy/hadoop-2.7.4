@@ -32,6 +32,16 @@ import org.apache.hadoop.util.LightWeightGSet;
  * the {@link BlockCollection} it is part of and datanodes where the replicas of 
  * the block are stored.
  */
+/**
+ * 在HDFS中,数据的存储是以Block块的形式进行组织的.而每个块的默认副本数是3个,所以一般每个在HDFS中会存在3个相同的block块分布在不同的DataNode节点之上.所以在每个DataNode上,会存储着大量的block,那么这些块是如何被组织,联系起来的的呢,HDFS在添加块,移除块时是如何操作这些block块以及对应的关联信息呢,链表?数组?HashMap?答案就在BlockInfoContiguous这个类中.
+ *
+ * BlockInfoContiguous邻近信息块
+ * 这个类不是在所有的Hadoop版本中都有,在最新的hadoop-trunk代码中这个类已经不怎么使用了,所以这里我要说明一下我学习使用的版本是hadoop-2.7.1.
+ * 在此版本中,BlockInfoContiguous就是用来联系寻找block块的直接信息类.
+ *
+ * 在BlockInfoContiguous类中,有2个内部关键的对象信息BlockCollection和triplets.
+ * 前者保存了类似副本数,副本位置等的一些信息,而triplets对象数组的设计则是本文的一个重点.
+ * */
 @InterfaceAudience.Private
 public class BlockInfoContiguous extends Block
     implements LightWeightGSet.LinkedElement {
@@ -54,6 +64,18 @@ public class BlockInfoContiguous extends Block
    * per replica is 42 bytes (LinkedList#Entry object per replica) versus 16
    * bytes using the triplets.
    */
+  /**
+   * triplets对象起始初始化是若干长度的Object对象,但是在赋值的时候,会存储2类的对象:
+   * 1.对于当前block块的信息,block存在于哪些data-storage中,假如存储于i个节点,则triplets对象数组大小就是3 * i个,
+   * 一般存储的节点数视副本系数而定.
+   *
+   * 2.对triplets每3个为一单位的数组来说:
+   * triplets[3 * i]保存的是data-storage信息,
+   * triplets[3 * i + 1]保存的是此data-storage中previous前一个block对象的信息,
+   * triplets[3 * i + 2]保存的则是后一块的block的信息,而保存block信息对象的类同样是BlockInfoContiguous.
+   *
+   * 这其实是一个"巨大的链表".但是他为了更高效的使用内存没有用jdk自带的LinkList这样的链表结构.
+   * */
   private Object[] triplets;
 
   /**
@@ -199,8 +221,8 @@ public class BlockInfoContiguous extends Block
    */
   boolean addStorage(DatanodeStorageInfo storage) {
     // find the last null node
-    int lastNode = ensureCapacity(1);
-    setStorageInfo(lastNode, storage);
+    int lastNode = ensureCapacity(1); // triplets[]数组中找到当前存储的插入位置
+    setStorageInfo(lastNode, storage); // 插入DatanodeStorageInfo对象
     setNext(lastNode, null);
     setPrevious(lastNode, null);
     return true;

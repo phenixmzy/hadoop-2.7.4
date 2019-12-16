@@ -101,6 +101,7 @@ import org.slf4j.LoggerFactory;
 
 /**
  * Keeps information related to the blocks stored in the Hadoop cluster.
+ * 保存了HADOOP集群中块存储相关的信息.
  */
 @InterfaceAudience.Private
 public class BlockManager {
@@ -1867,6 +1868,10 @@ public class BlockManager {
    * @return true if all known storages of the given DN have finished reporting.
    * @throws IOException
    */
+  /**
+   * 给指定的storage上报所有的blocks.
+   * 更新 storage下的所有block 以及block对应的storage list.
+   * */
   public boolean processReport(final DatanodeID nodeID,
       final DatanodeStorage storage,
       final BlockListAsLongs newReport,
@@ -1903,11 +1908,12 @@ public class BlockManager {
         return !node.hasStaleStorages();
       }
 
-      if (storageInfo.getBlockReportCount() == 0) {
+      if (storageInfo.getBlockReportCount() == 0) { // 对于第一次上报,调用processFirstBlockReport
         // The first block report can be processed a lot more efficiently than
         // ordinary block reports.  This shortens restart times.
+        // 首次Block Report会更有效率的处理,从而缩短重启的时间.
         processFirstBlockReport(storageInfo, newReport);
-      } else {
+      } else {// 非第一次上报
         invalidatedBlocks = processReport(storageInfo, newReport, context);
       }
       
@@ -1992,11 +1998,11 @@ public class BlockManager {
     // Modify the (block-->datanode) map, according to the difference
     // between the old and new block report.
     //
-    Collection<BlockInfoContiguous> toAdd = new LinkedList<BlockInfoContiguous>();
-    Collection<Block> toRemove = new TreeSet<Block>();
-    Collection<Block> toInvalidate = new LinkedList<Block>();
-    Collection<BlockToMarkCorrupt> toCorrupt = new LinkedList<BlockToMarkCorrupt>();
-    Collection<StatefulBlockInfo> toUC = new LinkedList<StatefulBlockInfo>();
+    Collection<BlockInfoContiguous> toAdd = new LinkedList<BlockInfoContiguous>(); // 新添加的块
+    Collection<Block> toRemove = new TreeSet<Block>(); // 待移除的块
+    Collection<Block> toInvalidate = new LinkedList<Block>(); // 无效的块
+    Collection<BlockToMarkCorrupt> toCorrupt = new LinkedList<BlockToMarkCorrupt>(); // 损坏的块
+    Collection<StatefulBlockInfo> toUC = new LinkedList<StatefulBlockInfo>(); // 正在复制中的块
     reportDiff(storageInfo, report,
         toAdd, toRemove, toInvalidate, toCorrupt, toUC);
 
@@ -2083,6 +2089,11 @@ public class BlockManager {
    * @param report - the initial block report, to be processed
    * @throws IOException 
    */
+  /**
+   * processFirstBlockReport仅仅用于初始Block 上报,首次Block Report是接收来自DataNode注册后.
+   * 首次汇报仅仅把有效Block加入到Datanode,而不是计算toRemove list(首次上报Namenode并没有任何Block).
+   * 还会自动丢弃任何无效的块，从而将它们的处理推迟到下一个块报告.
+   * */
   private void processFirstBlockReport(
       final DatanodeStorageInfo storageInfo,
       final BlockListAsLongs report) throws IOException {
@@ -2092,19 +2103,21 @@ public class BlockManager {
 
     for (BlockReportReplica iblk : report) {
       ReplicaState reportedState = iblk.getState();
-      
+
       if (shouldPostponeBlocksFromFuture &&
           namesystem.isGenStampInFuture(iblk)) {
         queueReportedBlock(storageInfo, iblk, reportedState,
             QUEUE_REASON_FUTURE_GENSTAMP);
         continue;
       }
-      
+
       BlockInfoContiguous storedBlock = blocksMap.getStoredBlock(iblk);
       // If block does not belong to any file, we are done.
+      // 一个游离的block,该block不属于任何的文件.
       if (storedBlock == null) continue;
-      
+
       // If block is corrupt, mark it and continue to next block.
+      // 如果Block 是损坏的,将其进行标记并调至下一个block处理.
       BlockUCState ucState = storedBlock.getBlockUCState();
       BlockToMarkCorrupt c = checkReplicaCorrupt(
           iblk, reportedState, storedBlock, ucState,
@@ -2113,6 +2126,7 @@ public class BlockManager {
         if (shouldPostponeBlocksFromFuture) {
           // In the Standby, we may receive a block report for a file that we
           // just have an out-of-date gen-stamp or state for, for example.
+          // 在Standby状态下,可能会收到一个文件的block report.eg:我们只有一个过期的gen stamp或state
           queueReportedBlock(storageInfo, iblk, reportedState,
               QUEUE_REASON_CORRUPT_STATE);
         } else {
@@ -2122,6 +2136,8 @@ public class BlockManager {
       }
       
       // If block is under construction, add this replica to its list
+      // Uc就是under Construction,正在构建的意思,表明此block块正在写动作.ucState=[UNDER_CONSTRUCTION,UNDER_RECOVERY]
+      // 如果block正在构建,副本添加入block副本list中.
       if (isBlockUnderConstruction(storedBlock, ucState, reportedState)) {
         ((BlockInfoContiguousUnderConstruction)storedBlock)
             .addReplicaIfNotPresent(storageInfo, iblk, reportedState);
@@ -2496,6 +2512,13 @@ public class BlockManager {
    * 
    * @throws IOException
    */
+  /**
+   * 较快的addStoredBlock版本.打算在启动时使用,用于初始化block report.如果不在安全模式时启动,则调用标准的addStoredBlock.
+   * 假设该方法称为immediately,因此不需要刷新blockMap的storedBlock.
+   * 因为在安全模式启动,因此不能处理underReplication/overReplication or pendingReplications or corruptReplicas.
+   * 不会记录每个block因为通常由数百万.
+   *
+   * */
   private void addStoredBlockImmediate(BlockInfoContiguous storedBlock,
       DatanodeStorageInfo storageInfo)
   throws IOException {
@@ -2528,7 +2551,8 @@ public class BlockManager {
    * needed replications if this takes care of the problem.
    * @return the block that is stored in blockMap.
    */
-  private Block addStoredBlock(final BlockInfoContiguous block,
+  private Block
+  addStoredBlock(final BlockInfoContiguous block,
                                DatanodeStorageInfo storageInfo,
                                DatanodeDescriptor delNodeHint,
                                boolean logEveryBlock)
@@ -3293,6 +3317,10 @@ public class BlockManager {
    * If there are any excess replicas, call processOverReplicatedBlock().
    * Process over replicated blocks only when active NN is out of safe mode.
    */
+  /**
+   * 检查节点是否存在多余副本,如果存在多余副本,会调用processOverReplicatedBlock()方法.
+   * 仅仅在NN处于active时,才对于复制块上处理.
+   * */
   void processOverReplicatedBlocksOnReCommission(
       final DatanodeDescriptor srcNode) {
     if (!namesystem.isPopulatingReplQueues()) {

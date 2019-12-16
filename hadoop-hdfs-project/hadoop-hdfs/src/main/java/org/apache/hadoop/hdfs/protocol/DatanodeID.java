@@ -39,14 +39,14 @@ import com.google.common.annotations.VisibleForTesting;
 public class DatanodeID implements Comparable<DatanodeID> {
   public static final DatanodeID[] EMPTY_ARRAY = {};
 
-  private String ipAddr;     // IP address
-  private String hostName;   // hostname claimed by datanode
-  private String peerHostName; // hostname from the actual connection
-  private int xferPort;      // data streaming port
-  private int infoPort;      // info server port
-  private int infoSecurePort; // info server port
-  private int ipcPort;       // IPC server port
-  private String xferAddr;
+  private String ipAddr;     // IP address - IP地址
+  private String hostName;   // hostname claimed by datanode - Datanode声明的hostname
+  private String peerHostName; // hostname from the actual connection - 真实连接的hostname
+  private int xferPort;      // data streaming port - 数据传输端口
+  private int infoPort;      // info server port - info服务端口
+  private int infoSecurePort; // info server port - info服务端口
+  private int ipcPort;       // IPC server port - IPC服务端口
+  private String xferAddr;   // 数据传输地址
 
   /**
    * UUID identifying a given datanode. For upgraded Datanodes this is the

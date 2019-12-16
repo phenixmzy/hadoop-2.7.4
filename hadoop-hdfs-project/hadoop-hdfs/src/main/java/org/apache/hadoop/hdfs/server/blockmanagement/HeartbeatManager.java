@@ -228,9 +228,9 @@ class HeartbeatManager implements DatanodeStatistics {
       LOG.info("Dead node {} is decommissioned immediately.", node);
       node.setDecommissioned();
     } else {
-      stats.subtract(node);
-      node.startDecommission();
-      stats.add(node);
+      stats.subtract(node); // 维护DN统计信息-1
+      node.startDecommission(); // DN设置为 DECOMMISSION_INPROGRESS
+      stats.add(node); // 维护DN统计信息-2
     }
   }
 
@@ -276,27 +276,30 @@ class HeartbeatManager implements DatanodeStatistics {
     final DatanodeManager dm = blockManager.getDatanodeManager();
     // It's OK to check safe mode w/o taking the lock here, we re-check
     // for safe mode after taking the lock before removing a datanode.
-    if (namesystem.isInStartupSafeMode()) {
+    if (namesystem.isInStartupSafeMode()) { // 是否处于安全模式
       return;
     }
+    // 查找故障节点以及故障存储
     boolean allAlive = false;
     while (!allAlive) {
       // locate the first dead node.
+      // 保存找到的第一个故障节点
       DatanodeID dead = null;
 
       // locate the first failed storage that isn't on a dead node.
+      // 保存找到的第一个故障存储,注意故障存储所在的Datanode也必须是正常运行的.
       DatanodeStorageInfo failedStorage = null;
 
       // check the number of stale nodes
       int numOfStaleNodes = 0;
       int numOfStaleStorages = 0;
       synchronized(this) {
-        for (DatanodeDescriptor d : datanodes) {
-          if (dead == null && dm.isDatanodeDead(d)) {
+        for (DatanodeDescriptor d : datanodes) { // 遍历所有的Datanodes
+          if (dead == null && dm.isDatanodeDead(d)) { // 如果发现Datanode在timeout的时间内还未上报心跳,则认为Datanode发生故障
             stats.incrExpiredHeartbeats();
-            dead = d;
+            dead = d; // 保存找到的第一个故障节点
           }
-          if (d.isStale(dm.getStaleInterval())) {
+          if (d.isStale(dm.getStaleInterval())) { // 检查是否是"脏节点"
             numOfStaleNodes++;
           }
           DatanodeStorageInfo[] storageInfos = d.getStorageInfos();
@@ -308,7 +311,7 @@ class HeartbeatManager implements DatanodeStatistics {
             if (failedStorage == null &&
                 storageInfo.areBlocksOnFailedStorage() &&
                 d != dead) {
-              failedStorage = storageInfo;
+              failedStorage = storageInfo; // 保存找到的一个故障存储
             }
           }
 
@@ -328,6 +331,7 @@ class HeartbeatManager implements DatanodeStatistics {
             return;
           }
           synchronized(this) {
+            // 调用DatanodeManager#removeDeadDatanode方法移除故障节点上的所有数据块信息
             dm.removeDeadDatanode(dead);
           }
         } finally {
@@ -363,7 +367,7 @@ class HeartbeatManager implements DatanodeStatistics {
         try {
           final long now = Time.monotonicNow();
           if (lastHeartbeatCheck + heartbeatRecheckInterval < now) {
-            heartbeatCheck();
+            heartbeatCheck(); // 调用heartbeatCheck检查心跳更新情况
             lastHeartbeatCheck = now;
           }
           if (blockManager.shouldUpdateBlockKey(now - lastBlockKeyUpdate)) {

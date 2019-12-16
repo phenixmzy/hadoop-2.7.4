@@ -133,6 +133,12 @@ public class DatanodeStorageInfo {
    * stale. If any block has at least one stale replica, then no invalidations
    * will be processed for this block. See HDFS-1972.
    */
+  /**
+   * 在启动或故障转移时,群集中的存储可能会从之前的NameNode中删除pending的块.在收到块报告之前,这些Block内容会被视为过时.
+   * 当一个Storage被认为是stale时,其副本也是被认为是stale的.
+   * 如果任何块至少有一个过时的副本，则不会对此块进行任何无效处理.
+   * 详细察看HDFS-1972.
+   * */
   private boolean blockContentsStale = true;
 
   DatanodeStorageInfo(DatanodeDescriptor dn, DatanodeStorage s) {
