@@ -806,7 +806,7 @@ class BlockSender implements java.io.Closeable {
       boolean transferTo = transferToAllowed && !verifyChecksum
           && baseStream instanceof SocketOutputStream
           && blockIn instanceof FileInputStream;
-      if (transferTo) {
+      if (transferTo) { // 零拷贝
         FileChannel fileChannel = ((FileInputStream)blockIn).getChannel();
         blockInPosition = fileChannel.position();
         streamForSendChunks = baseStream;
