@@ -891,20 +891,25 @@ public class MapTask extends Task {
     private CompressionCodec codec;
 
     // k/v accounting
-    private IntBuffer kvmeta; // metadata overlay on backing store
-    int kvstart;            // marks origin of spill metadata
-    int kvend;              // marks end of spill metadata
-    int kvindex;            // marks end of fully serialized records
+    // 环形缓存区kvbuffer分两部分:kvmeta 和 buf. kvmeta是存放索引,buf是存放kv的值.
+    // kvmeta(valuestart,keyStart,partition,valeLen)以及相关的索引kvstart,kvend,kvindex逆时针方向移动;
+    // buf(keyData,valData)则顺时针移动存放;
 
-    int equator;            // marks origin of meta/serialization
-    int bufstart;           // marks beginning of spill
-    int bufend;             // marks beginning of collectable
+    // kvmeta只是kvbuffer中索引存储部分的一个视角,因为索引往往是按整型存储(4字节),所以使用kvmeta来重新组织该部分的字节
+    private IntBuffer kvmeta; // metadata overlay on backing store
+    int kvstart;            // marks origin of spill metadata - 溢出时索引的起始位置
+    int kvend;              // marks end of spill metadata - 溢出时索引的结束位置
+    int kvindex;            // marks end of fully serialized records - 下次要插入的索引的位置
+
+    int equator;            // marks origin of meta/serialization - 缓冲区的分割线,用来分割数据和数据的索引信息
+    int bufstart;           // marks beginning of spill - 溢出时raw数据的起始位置
+    int bufend;             // marks beginning of collectable - 溢出时raw数据的结束位置
     int bufmark;            // marks end of record
-    int bufindex;           // marks end of collected
+    int bufindex;           // marks end of collected - 下次要写入的raw数据的位置
     int bufvoid;            // marks the point where we should stop
                             // reading at the end of the buffer
 
-    byte[] kvbuffer;        // main output buffer
+    byte[] kvbuffer;        // main output buffer - 字节数组,数据和数据的索引都会存在该数组中
     private final byte[] b0 = new byte[0];
 
     private static final int VALSTART = 0;         // val offset in acct
@@ -917,7 +922,7 @@ public class MapTask extends Task {
     // spill accounting
     private int maxRec;
     private int softLimit;
-    boolean spillInProgress;;
+    boolean spillInProgress;
     int bufferRemaining;
     volatile Throwable sortSpillException = null;
 
@@ -929,6 +934,7 @@ public class MapTask extends Task {
     final Condition spillReady = spillLock.newCondition();
     final BlockingBuffer bb = new BlockingBuffer();
     volatile boolean spillThreadRunning = false;
+    // spill过程实际是由spillThread完成.spillThrad是环形缓冲区的消费者.
     final SpillThread spillThread = new SpillThread();
 
     private FileSystem rfs;
@@ -965,8 +971,11 @@ public class MapTask extends Task {
       rfs = ((LocalFileSystem)FileSystem.getLocal(job)).getRaw();
 
       //sanity checks
+      // 获取到spiller，默认80%
       final float spillper =
         job.getFloat(JobContext.MAP_SORT_SPILL_PERCENT, (float)0.8);
+
+      //获取sortmb，就是整个缓冲区的大小，默认100M
       final int sortmb = job.getInt(JobContext.IO_SORT_MB, 100);
       indexCacheMemoryLimit = job.getInt(JobContext.INDEX_CACHE_MEMORY_LIMIT,
                                          INDEX_CACHE_MEMORY_LIMIT_DEFAULT);
@@ -978,21 +987,31 @@ public class MapTask extends Task {
         throw new IOException(
             "Invalid \"" + JobContext.IO_SORT_MB + "\": " + sortmb);
       }
+      // //获取排序方法，使用快速排序的方法,默认使用QuickSort
       sorter = ReflectionUtils.newInstance(job.getClass("map.sort.class",
             QuickSort.class, IndexedSorter.class), job);
       // buffers and accounting
+      // 将mb转化成byte,sortmb<<20就是sortmb*104*1024
       int maxMemUsage = sortmb << 20;
       maxMemUsage -= maxMemUsage % METASIZE;
+      //生成kvbuffer
       kvbuffer = new byte[maxMemUsage];
       bufvoid = kvbuffer.length;
+      // 生成kvmeta,kvmeta是kvbuffer的封装
       kvmeta = ByteBuffer.wrap(kvbuffer)
          .order(ByteOrder.nativeOrder())
          .asIntBuffer();
+      //设置分割线为0
       setEquator(0);
+
+      //初始化kvstart，kvend，kvindex都为kvbuffer.length-metasize，kvindex在setEquator中已经计算出来了
       bufstart = bufend = bufindex = equator;
       kvstart = kvend = kvindex;
 
+      //计算kvmeta能存储的最大数量
       maxRec = kvmeta.capacity() / NMETA;
+
+      //设置softlimit为默认缓存的80%
       softLimit = (int)(kvbuffer.length * spillper);
       bufferRemaining = softLimit;
       LOG.info(JobContext.IO_SORT_MB + ": " + sortmb);
@@ -1004,6 +1023,8 @@ public class MapTask extends Task {
       comparator = job.getOutputKeyComparator();
       keyClass = (Class<K>)job.getMapOutputKeyClass();
       valClass = (Class<V>)job.getMapOutputValueClass();
+
+      //生成keySerializer，valueSerializer
       serializationFactory = new SerializationFactory(job);
       keySerializer = serializationFactory.getSerializer(keyClass);
       keySerializer.open(bb);
@@ -1041,6 +1062,7 @@ public class MapTask extends Task {
       }
       spillInProgress = false;
       minSpillsForCombine = job.getInt(JobContext.MAP_COMBINE_MIN_SPILLS, 3);
+      //启动溢出文件的后台线程
       spillThread.setDaemon(true);
       spillThread.setName("SpillThread");
       spillLock.lock();
@@ -1147,7 +1169,7 @@ public class MapTask extends Task {
         // serialize key bytes into buffer
         int keystart = bufindex;
         keySerializer.serialize(key);
-        if (bufindex < keystart) {
+        if (bufindex < keystart) { //key跨边界的情况,需要将key往后偏移,保证key是连续的,不能发生一部分在尾部一部分在头部的情况
           // wrapped the key; must make contiguous
           bb.shiftBufferedKey();
           keystart = 0;
@@ -1171,7 +1193,7 @@ public class MapTask extends Task {
         mapOutputByteCounter.increment(
             distanceTo(keystart, valend, bufvoid));
 
-        // write accounting info
+        // write accounting info - 写入kvmeta信息
         kvmeta.put(kvindex + PARTITION, partition);
         kvmeta.put(kvindex + KEYSTART, keystart);
         kvmeta.put(kvindex + VALSTART, valstart);
@@ -1258,13 +1280,16 @@ public class MapTask extends Task {
     public int compare(final int mi, final int mj) {
       final int kvi = offsetFor(mi % maxRec);
       final int kvj = offsetFor(mj % maxRec);
+      //取两个元数据的分区部分对应的索引值
       final int kvip = kvmeta.get(kvi + PARTITION);
       final int kvjp = kvmeta.get(kvj + PARTITION);
       // sort by partition
+      //如果分区不同,先按分区索引排序
       if (kvip != kvjp) {
         return kvip - kvjp;
       }
       // sort by key
+      // 分区是同一个时,通过元数据取key的原始数据,进行比较
       return comparator.compare(kvbuffer,
           kvmeta.get(kvi + KEYSTART),
           kvmeta.get(kvi + VALSTART) - kvmeta.get(kvi + KEYSTART),
@@ -1279,6 +1304,8 @@ public class MapTask extends Task {
      * @see IndexedSortable#swap
      */
     public void swap(final int mi, final int mj) {
+      // 比较后,如果不符合排序规则,就进行交换.
+      // 取两个元数据的偏移量
       int iOff = (mi % maxRec) * METASIZE;
       int jOff = (mj % maxRec) * METASIZE;
       System.arraycopy(kvbuffer, iOff, META_BUFFER_TMP, 0, METASIZE);
@@ -1578,18 +1605,27 @@ public class MapTask extends Task {
       spillReady.signal();
     }
 
+    /**
+     * 当满足kvbuffer里的阈值,或者是最后一次flush操作,都会调用 sortAndSpill() 操作
+     * */
     private void sortAndSpill() throws IOException, ClassNotFoundException,
                                        InterruptedException {
       //approximate the length of the output file to be the length of the
       //buffer + header lengths for the partitions
+      // 提前统计这次溢写是多少个字节长度:包含kv原始数据和分区的头信息
       final long size = distanceTo(bufstart, bufend, bufvoid) +
                   partitions * APPROX_HEADER_LENGTH;
       FSDataOutputStream out = null;
       try {
         // create spill file
+        // 为这次溢写,创建一个溢写记录对象
         final SpillRecord spillRec = new SpillRecord(partitions);
+
+        // 为这次溢写，构造溢写文件路径
         final Path filename =
             mapOutputFile.getSpillFileForWrite(numSpills, size);
+
+        // 调用文件系统对象的create方法,创建溢写文件,返回流对象
         out = rfs.create(filename);
 
         final int mstart = kvend / NMETA;
@@ -1597,28 +1633,52 @@ public class MapTask extends Task {
           (kvstart >= kvend
           ? kvstart
           : kvmeta.capacity() + kvstart) / NMETA;
+        // 统计元数据在环形缓冲区的位置,并对其进行排序
+        // 默认使用QuickSort排序方式,一定会调用MapOutputBuffer.compare() 和 MapOutputBuffer.swap()
         sorter.sort(MapOutputBuffer.this, mstart, mend, reporter);
         int spindex = mstart;
+        // 构建一个索引记录对象,记录这次溢写的基本信息,如偏移量,长度等
         final IndexRecord rec = new IndexRecord();
+
+        // 构建了一个buffer,存储value的字节序列
         final InMemValBytes value = new InMemValBytes();
+
+        // 一个分区接一个分区的进行遍历元数据
         for (int i = 0; i < partitions; ++i) {
           IFile.Writer<K, V> writer = null;
           try {
+            //获取开始溢写的偏移量
             long segmentStart = out.getPos();
+
+            //加密或者不加密操作，重写构建流对象
             FSDataOutputStream partitionOut = CryptoUtils.wrapIfNecessary(job, out);
+
+            //将partitionOut进行再次封装成writer流对象,进行溢写
             writer = new Writer<K, V>(job, partitionOut, keyClass, valClass, codec,
                                       spilledRecordsCounter);
             if (combinerRunner == null) {
               // spill directly
+              // 构建一个buffer,存储key的字节序列
               DataInputBuffer key = new DataInputBuffer();
+
+              // 遍历当前分区中的所有元数据
               while (spindex < mend &&
                   kvmeta.get(offsetFor(spindex % maxRec) + PARTITION) == i) {
+                // 取出当前元数据
                 final int kvoff = offsetFor(spindex % maxRec);
+
+                //通过元数据取对应的原始数据kv对
                 int keystart = kvmeta.get(kvoff + KEYSTART);
                 int valstart = kvmeta.get(kvoff + VALSTART);
+
+                // 将key的值,写入buffer中
                 key.reset(kvbuffer, keystart, valstart - keystart);
+
+                // 将value的值写buffer中
                 getVBytesForOffset(kvoff, value);
                 writer.append(key, value);
+
+                // 为下一个元数据做准备工作
                 ++spindex;
               }
             } else {
@@ -1639,9 +1699,11 @@ public class MapTask extends Task {
             }
 
             // close the writer
+            // 将key和value对应的两个buffer写到溢写文件中
             writer.close();
 
             // record offsets
+            // 统计这次溢写的索引信息,封装到溢写记录(spillRec)对象里
             rec.startOffset = segmentStart;
             rec.rawLength = writer.getRawLength() + CryptoUtils.cryptoPadding(job);
             rec.partLength = writer.getCompressedLength() + CryptoUtils.cryptoPadding(job);
@@ -1653,18 +1715,20 @@ public class MapTask extends Task {
           }
         }
 
-        if (totalIndexCacheMemory >= indexCacheMemoryLimit) {
+        if (totalIndexCacheMemory >= indexCacheMemoryLimit) { // 如果这个缓存区小于真正的索引信息量,就写到文件中
           // create spill index file
           Path indexFilename =
               mapOutputFile.getSpillIndexFileForWrite(numSpills, partitions
                   * MAP_OUTPUT_INDEX_RECORD_LENGTH);
+          // 将溢写对象里的信息写入一个索引文件中
           spillRec.writeToFile(indexFilename, job);
-        } else {
+        } else { // 如果缓存区大于信息量,就不进行写操作(写索引文件)
           indexCacheList.add(spillRec);
           totalIndexCacheMemory +=
             spillRec.size() * MAP_OUTPUT_INDEX_RECORD_LENGTH;
         }
         LOG.info("Finished spill " + numSpills);
+        // 为下一次溢写进行统计数字(这个数字与生成的溢写文件名称有关系)
         ++numSpills;
       } finally {
         if (out != null) out.close();
@@ -1801,19 +1865,30 @@ public class MapTask extends Task {
       public void close() { }
     }
 
+    /**
+     * 当最后一次溢写操作完成(一定是调用了MapOutputBuffer.flush方法)后,开始合并溢写文件
+     * */
     private void mergeParts() throws IOException, InterruptedException, 
                                      ClassNotFoundException {
       // get the approximate size of the final output/index files
+      // 统计所有溢写文件的字节总长度
       long finalOutFileSize = 0;
+
+      // 统计所有索引文件的字节总长度
       long finalIndexFileSize = 0;
+
+      // 创建一个numSpills长度的Path数组,存储所有溢写文件的路径
       final Path[] filename = new Path[numSpills];
       final TaskAttemptID mapId = getTaskID();
 
+      // 循环获取所有溢写文件的路径存储到数组Path[]中,同时累加所有溢写文件的字节长度
       for(int i = 0; i < numSpills; i++) {
         filename[i] = mapOutputFile.getSpillFile(i);
         finalOutFileSize += rfs.getFileStatus(filename[i]).getLen();
       }
-      if (numSpills == 1) { //the spill is the final output
+
+      if (numSpills == 1) { //the spill is the final output - 溢写文件的个数为1
+        // 将溢写文件名称重命名,当成最后一个文件
         sameVolRename(filename[0],
             mapOutputFile.getOutputFileForWriteInVolume(filename[0]));
         if (indexCacheList.size() == 0) {
@@ -1828,6 +1903,8 @@ public class MapTask extends Task {
       }
 
       // read in paged indices
+      // 溢写文件个数不为1时
+      // 获取所有的索引文件,加载到indexCacheList(索引缓存列表)
       for (int i = indexCacheList.size(); i < numSpills; ++i) {
         Path indexFileName = mapOutputFile.getSpillIndexFile(i);
         indexCacheList.add(new SpillRecord(indexFileName, job));
@@ -1837,15 +1914,18 @@ public class MapTask extends Task {
       //lengths for each partition
       finalOutFileSize += partitions * APPROX_HEADER_LENGTH;
       finalIndexFileSize = partitions * MAP_OUTPUT_INDEX_RECORD_LENGTH;
+
+      // 构建最终的输出文件路径(finalOutputFile)和最终的索引文件路径(finalIndexFile)
       Path finalOutputFile =
           mapOutputFile.getOutputFileForWrite(finalOutFileSize);
       Path finalIndexFile =
           mapOutputFile.getOutputIndexFileForWrite(finalIndexFileSize);
 
       //The output stream for the final single output file
+      // 调用文件系统的create方法创建最终的文件
       FSDataOutputStream finalOut = rfs.create(finalOutputFile, true, 4096);
 
-      if (numSpills == 0) {
+      if (numSpills == 0) { // 溢写文件为0时,也创建一个空文件,但没有做任何写操作
         //create dummy files
         IndexRecord rec = new IndexRecord();
         SpillRecord sr = new SpillRecord(partitions);
@@ -1868,21 +1948,30 @@ public class MapTask extends Task {
         sortPhase.complete();
         return;
       }
+      // 溢写文件>1
       {
         sortPhase.addPhases(partitions); // Divide sort phase into sub-phases
         
         IndexRecord rec = new IndexRecord();
         final SpillRecord spillRec = new SpillRecord(partitions);
+        // 开始遍历多个文件的相同分区
         for (int parts = 0; parts < partitions; parts++) {
           //create the segments to be merged
+          // 在当此循环中,创建要合并的段(segment)
           List<Segment<K,V>> segmentList =
             new ArrayList<Segment<K, V>>(numSpills);
+
+          //然后遍历当前分区的所有溢写文件
           for(int i = 0; i < numSpills; i++) {
+            // 获取当前分区的索引记录
             IndexRecord indexRecord = indexCacheList.get(i).getIndex(parts);
 
+            // 将一个溢写文件的当前分区封装成Segment对象
             Segment<K,V> s =
               new Segment<K,V>(job, rfs, filename[i], indexRecord.startOffset,
                                indexRecord.partLength, codec, true);
+
+            // 添加到集合中
             segmentList.add(i, s);
 
             if (LOG.isDebugEnabled()) {
@@ -1891,10 +1980,11 @@ public class MapTask extends Task {
                   indexRecord.rawLength + ", " + indexRecord.partLength + ")");
             }
           }
-
+          // 判断是否需要再次排序 仅当存在中间合并时才对段进行排序
           int mergeFactor = job.getInt(JobContext.IO_SORT_FACTOR, 100);
           // sort the segments only if there are intermediate merges
           boolean sortSegments = segmentList.size() > mergeFactor;
+
           //merge
           @SuppressWarnings("unchecked")
           RawKeyValueIterator kvIter = Merger.merge(job, rfs,
@@ -1906,6 +1996,7 @@ public class MapTask extends Task {
                          TaskType.MAP);
 
           //write merged output to disk
+          // 将合并后的输出写入磁盘（往最终的文件里写）
           long segmentStart = finalOut.getPos();
           FSDataOutputStream finalPartitionOut = CryptoUtils.wrapIfNecessary(job, finalOut);
           Writer<K, V> writer =
@@ -1919,6 +2010,7 @@ public class MapTask extends Task {
           }
 
           //close
+          // 关闭流,结束此分区的写入磁盘操作,进行下一个分区的写入操作
           writer.close();
 
           sortPhase.startNextPhase();
@@ -1930,7 +2022,10 @@ public class MapTask extends Task {
           spillRec.putIndex(rec, parts);
         }
         spillRec.writeToFile(finalIndexFile, job);
+        // 所有分区结束写出操作后,关闭流
         finalOut.close();
+
+        // 删除所有的溢写文件
         for(int i = 0; i < numSpills; i++) {
           rfs.delete(filename[i],true);
         }

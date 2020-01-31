@@ -34,6 +34,10 @@ import org.apache.hadoop.mapreduce.TaskAttemptContext;
  * under the attribute name mapreduce.input.keyvaluelinerecordreader.key.value.separator. The default
  * separator is the tab character ('\t').
  */
+/**
+ * 这里使用了代理模式,LineRecordReader为代理类.
+ * 代理类LineRecordReader初始化时接收一个InputSplit对象,
+ * */
 @InterfaceAudience.Public
 @InterfaceStability.Stable
 public class KeyValueLineRecordReader extends RecordReader<Text, Text> {

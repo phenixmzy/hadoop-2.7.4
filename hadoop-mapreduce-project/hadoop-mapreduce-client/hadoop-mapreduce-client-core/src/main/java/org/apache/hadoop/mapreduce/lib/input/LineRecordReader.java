@@ -44,6 +44,10 @@ import org.apache.commons.logging.Log;
 /**
  * Treats keys as offset in file and value as line. 
  */
+/**
+ * 把key作为作为文件中的offset;
+ * value作为line内容.
+ * */
 @InterfaceAudience.LimitedPrivate({"MapReduce", "Pig"})
 @InterfaceStability.Evolving
 public class LineRecordReader extends RecordReader<LongWritable, Text> {

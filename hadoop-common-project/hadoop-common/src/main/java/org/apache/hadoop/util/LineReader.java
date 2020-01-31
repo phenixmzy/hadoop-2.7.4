@@ -38,6 +38,9 @@ import org.apache.hadoop.io.Text;
  * In both cases, EOF also terminates an otherwise unterminated
  * line.
  */
+/**
+ * 提供了一个从输入流中读取的行读取器.它会把输入流中的数据通过fillBuffer()把数据缓存到变量buffer中.
+ * */
 @InterfaceAudience.LimitedPrivate({"MapReduce"})
 @InterfaceStability.Unstable
 public class LineReader implements Closeable {
@@ -189,13 +192,18 @@ public class LineReader implements Closeable {
      * already buffered in buffer, so we have several cases:
      * 1. No newline characters are in the buffer, so we need to copy
      *    everything and read another buffer from the stream.
+     *    缓冲区没有换行符,所以需要copy内容并从流中读取另一个buffer.
+     *
      * 2. An unambiguously terminated line is in buffer, so we just
      *    copy to str.
+     *    缓冲区存在换行符,直接从中复制.
+     *
      * 3. Ambiguously terminated line is in buffer, i.e. buffer ends
      *    in CR.  In this case we copy everything up to CR to str, but
      *    we also need to see what follows CR: if it's LF, then we
      *    need consume LF as well, so next call to readLine will read
      *    from after that.
+     *    buffer不确定是否存在.
      * We use a flag prevCharCR to signal if previous character was CR
      * and, if it happens to be at the end of the buffer, delay
      * consuming it until we have a chance to look at the char that
