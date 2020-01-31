@@ -180,7 +180,10 @@ public class ReadaheadPool {
      */
     public long getLength();
   }
-  
+
+  /**
+   * 预读取实现类
+   * */
   private static class ReadaheadRequestImpl implements Runnable, ReadaheadRequest {
     private final String identifier;
     private final FileDescriptor fd;

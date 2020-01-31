@@ -25,6 +25,11 @@ import static org.apache.hadoop.util.Time.monotonicNow;
  * The parameter bandwidthPerSec specifies the total bandwidth shared by
  * threads.
  */
+/**
+ * 用于限制数据的传输.
+ * 该类是线程安全的.可以给多个线程共享.
+ * 总带宽(total bandwidthPerSec)所有线程共享.
+ * */
 public class DataTransferThrottler {
   private final long period;          // period over which bw is imposed
   private final long periodExtension; // Max period over which bw accumulates.

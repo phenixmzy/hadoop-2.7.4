@@ -501,8 +501,13 @@ class BlockReceiver implements Closeable {
    * Receives and processes a packet. It can contain many chunks.
    * returns the number of data bytes that the packet has.
    */
+  /**
+   * 接收和处理一个packet.一个packet包含多个chunks.
+   * 方法返回一个packet的字节数.
+   * */
   private int receivePacket() throws IOException {
     // read the next packet
+    // 1 完整读取一个packet到PacketReceiver的ByteBuffer里面,然后再由其发往下游节点(普通读取模式、管道中最后一个DN模式、syncBlock==true模式)
     packetReceiver.receiveNextPacket(in);
 
     PacketHeader header = packetReceiver.getHeader();
@@ -546,6 +551,7 @@ class BlockReceiver implements Closeable {
     }
     
     // put in queue for pending acks, unless sync was requested
+    // 2 放入确认等待队列,除非要求同步(普通读取模式)
     if (responder != null && !syncBlock && !shouldVerifyChecksum()) {
       ((PacketResponder) responder.getRunnable()).enqueue(seqno,
           lastPacketInBlock, offsetInBlock, Status.SUCCESS);
@@ -558,6 +564,7 @@ class BlockReceiver implements Closeable {
     }
 
     //First write the packet to the mirror:
+    // 3 把packet发往下游节点(普通读取模式)
     if (mirrorOut != null && !mirrorError) {
       try {
         long begin = Time.monotonicNow();
@@ -579,8 +586,8 @@ class BlockReceiver implements Closeable {
     
     ByteBuffer dataBuf = packetReceiver.getDataSlice();
     ByteBuffer checksumBuf = packetReceiver.getChecksumSlice();
-    
-    if (lastPacketInBlock || len == 0) {
+    /******************************************************************************************************************/
+    if (lastPacketInBlock || len == 0) { // 最后一个packet,刷写整个Block以及meta file到磁盘
       if(LOG.isDebugEnabled()) {
         LOG.debug("Receiving an empty packet or the end of the block " + block);
       }
@@ -588,7 +595,7 @@ class BlockReceiver implements Closeable {
       if (syncBlock) {
         flushOrSync(true);
       }
-    } else {
+    } else { // 非最后一个包
       final int checksumLen = diskChecksum.getChecksumSize(len);
       final int checksumReceivedLen = checksumBuf.capacity();
 
@@ -697,6 +704,7 @@ class BlockReceiver implements Closeable {
           int numBytesToDisk = (int)(offsetInBlock-onDiskLen);
           
           // Write data to disk.
+          // 普通读取,数据包(packet)写到数据输出流
           long begin = Time.monotonicNow();
           out.write(dataBuf.array(), startByteToDisk, numBytesToDisk);
           long duration = Time.monotonicNow() - begin;
@@ -771,6 +779,7 @@ class BlockReceiver implements Closeable {
           }
 
           /// flush entire packet, sync if requested
+          // 这里是真正的把数据包写到磁盘文件
           flushOrSync(syncBlock);
           
           replicaInfo.setLastChecksumAndDataLen(offsetInBlock, lastCrc);
@@ -788,6 +797,7 @@ class BlockReceiver implements Closeable {
 
     // if sync was requested, put in queue for pending acks here
     // (after the fsync finished)
+    // 通知PacketResponder处理响应消息
     if (responder != null && (syncBlock || shouldVerifyChecksum())) {
       ((PacketResponder) responder.getRunnable()).enqueue(seqno,
           lastPacketInBlock, offsetInBlock, Status.SUCCESS);
@@ -903,10 +913,11 @@ class BlockReceiver implements Closeable {
         responder.start(); // start thread to processes responses
       }
 
+      // 接收数据包,直到最后一个packet
       while (receivePacket() >= 0) { /* Receive until the last packet */ }
 
-      // wait for all outstanding packet responses. And then
-      // indicate responder to gracefully shutdown.
+      // wait for all outstanding(未完成) packet responses. And then
+      // indicate(提示) responder(responder线程) to gracefully shutdown.
       // Mark that responder has been closed for future processing
       if (responder != null) {
         ((PacketResponder)responder.getRunnable()).close();
@@ -1280,7 +1291,7 @@ class BlockReceiver implements Closeable {
     public void run() {
       boolean lastPacketInBlock = false;
       final long startTime = ClientTraceLog.isInfoEnabled() ? System.nanoTime() : 0;
-      while (isRunning() && !lastPacketInBlock) {
+      while (isRunning() && !lastPacketInBlock) { // 循环接收数据包
         long totalAckTimeNanos = 0;
         boolean isInterrupted = false;
         try {
@@ -1290,6 +1301,9 @@ class BlockReceiver implements Closeable {
           long seqno = PipelineAck.UNKOWN_SEQNO; // 数据包响应的序列号
           long ackRecvNanoTime = 0;
           try {
+            /**
+             * 1 从下游读取响应包,并冲ackQueue取出一个packet,设置包数据,seqno,type等并判断相关信息.
+             * */
             if (type != PacketResponderType.LAST_IN_PIPELINE && !mirrorError) {
               // read an ack from downstream datanode
               ack.readFields(downstreamIn); // 从下游节点的输出流中读入一个响应
@@ -1393,6 +1407,9 @@ class BlockReceiver implements Closeable {
             finalizeBlock(startTime);
           }
 
+          /**
+           * 2 复制下游节点的数据包响应,加入当前数据节点的状态,并发合并相应的头信息送给上游节点
+           * */
           // 复制下游节点的数据包响应,加入当前数据节点的状态,并发送给上游节点
           Status myStatus = pkt != null ? pkt.ackStatus : Status.SUCCESS;
           sendAckUpstream(ack, expected, totalAckTimeNanos,

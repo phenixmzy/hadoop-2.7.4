@@ -625,7 +625,7 @@ class BlockSender implements java.io.Closeable {
     }
     
     try {
-      if (transferTo) { // transferTo模式
+      if (transferTo) { // transferTo模式(零拷贝)
         SocketOutputStream sockOut = (SocketOutputStream)out;
         // First write header and checksums - 将头部和校验和写入到输出流中
         sockOut.write(buf, headerOff, dataOff - headerOff);
@@ -825,7 +825,7 @@ class BlockSender implements java.io.Closeable {
       // 构造缓冲区pktBuf
       ByteBuffer pktBuf = ByteBuffer.allocate(pktBufSize);
 
-      // 循环发送packet
+      // 拆分为个包packet并循环发送,最后发送空包标记结束
       while (endOffset > offset && !Thread.currentThread().isInterrupted()) {
         manageOsCache();
         long len = sendPacket(pktBuf, maxChunksPerPacket, streamForSendChunks,
@@ -863,9 +863,10 @@ class BlockSender implements java.io.Closeable {
   /**
    * Manage the OS buffer cache by performing read-ahead
    * and drop-behind.
+   * 通过执行预读和丢弃来管理操作系统缓冲区缓存
    */
   /**
-   * BlockSender在读取数据块之前，会先调用manageOsCache方法执行预读取(read-ahead)操作以挺高读取效率.
+   * BlockSender在读取数据块之前，会先调用manageOsCache方法执行预读取(read-ahead)操作以提高读取效率.
    *
    * 预读取操作:
    * 预读取操作就是将数据块文件提前读取到操作系统的缓存中,这样当BlockSender到文件系统中读取数据块时,

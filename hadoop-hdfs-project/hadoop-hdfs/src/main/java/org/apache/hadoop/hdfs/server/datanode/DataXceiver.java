@@ -546,6 +546,8 @@ class DataXceiver extends Receiver implements Runnable {
       }
       
       // send op status
+      // writeSuccessWithChecksumInfo 方法:
+      // 发送BlockOpResponseProto响应给客户端,通知客户端读请求已经成功接收,并告知客户端端当前数据节点校验信息
       writeSuccessWithChecksumInfo(blockSender, new DataOutputStream(getOutputStream()));
 
       long beginRead = Time.monotonicNow();
@@ -631,6 +633,7 @@ class DataXceiver extends Receiver implements Runnable {
     final boolean isTransfer = stage == BlockConstructionStage.TRANSFER_RBW
         || stage == BlockConstructionStage.TRANSFER_FINALIZED;
     long size = 0;
+    /**1 管道中向上游节点发送确认信息的输出流 */
     // reply to upstream datanode or client
     // 管道中向上游节点发送确认信息的输出流
     final DataOutputStream replyOut = getBufferedOutputStream();
@@ -666,6 +669,7 @@ class DataXceiver extends Receiver implements Runnable {
     LOG.info("Receiving " + block + " src: " + remoteAddress + " dest: "
         + localAddress);
 
+    /** 2 建立与下游连接的输入、输出流,并创建一个blockReceiver对象用于接收写入数据和Sender对象用于发送数据包到下游 */
     DataOutputStream mirrorOut = null;  // stream to next target 到下游节点的输出流
     DataInputStream mirrorIn = null;    // reply from next target 来自下游数据节点的输入流
     Socket mirrorSock = null;           // socket to next target 到下游节点的Socket
@@ -695,7 +699,7 @@ class DataXceiver extends Receiver implements Runnable {
 
       //
       // Connect to downstream machine, if appropriate
-      // 连接到下游节点
+      // 2.1 连接到下游节点
       if (targets.length > 0) {
         InetSocketAddress mirrorTarget = null;
         // Connect to backup machine
