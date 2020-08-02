@@ -33,7 +33,9 @@ import org.apache.hadoop.util.LightWeightGSet;
  * the block are stored.
  */
 /**
- * 在HDFS中,数据的存储是以Block块的形式进行组织的.而每个块的默认副本数是3个,所以一般每个在HDFS中会存在3个相同的block块分布在不同的DataNode节点之上.所以在每个DataNode上,会存储着大量的block,那么这些块是如何被组织,联系起来的的呢,HDFS在添加块,移除块时是如何操作这些block块以及对应的关联信息呢,链表?数组?HashMap?答案就在BlockInfoContiguous这个类中.
+ * 在HDFS中,数据的存储是以Block块的形式进行组织的.而每个块的默认副本数是3个,所以一般每个在HDFS中会存在3个相同的block块分布在不同的DataNode节点之上.
+ * 所以在每个DataNode上,会存储着大量的block,那么这些块是如何被组织,联系起来的的呢,HDFS在添加块,移除块时是如何操作这些block块以及对应的关联信息呢,链表?数组?HashMap?
+ * 答案就在BlockInfoContiguous这个类中.
  *
  * BlockInfoContiguous邻近信息块
  * 这个类不是在所有的Hadoop版本中都有,在最新的hadoop-trunk代码中这个类已经不怎么使用了,所以这里我要说明一下我学习使用的版本是hadoop-2.7.1.
@@ -47,6 +49,9 @@ public class BlockInfoContiguous extends Block
     implements LightWeightGSet.LinkedElement {
   public static final BlockInfoContiguous[] EMPTY_ARRAY = {};
 
+  /**
+   * bc保存该数据块属于哪一个HDFS文件,记录了HDFS文件的INode对象的引用
+   * */
   private BlockCollection bc;
 
   /** For implementing {@link LightWeightGSet.LinkedElement} interface */
@@ -75,6 +80,8 @@ public class BlockInfoContiguous extends Block
    * triplets[3 * i + 2]保存的则是后一块的block的信息,而保存block信息对象的类同样是BlockInfoContiguous.
    *
    * 这其实是一个"巨大的链表".但是他为了更高效的使用内存没有用jdk自带的LinkList这样的链表结构.
+   *
+   * 定义了这个Block的副本存储在哪些数据节点上,triplets这个字段非常非常的重要.
    * */
   private Object[] triplets;
 

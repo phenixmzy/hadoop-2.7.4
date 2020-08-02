@@ -120,6 +120,10 @@ public class INodeFile extends INodeWithAdditionalFields
 
   private long header = 0L;
 
+  /**
+   * 记录了一个HDFS文件拥有的所有数据块.
+   * 也正是通过这个字段HDFS第一关系与第二关系发生了关联.
+   * */
   private BlockInfoContiguous[] blocks;
 
   INodeFile(long id, byte[] name, PermissionStatus permissions, long mtime,
